@@ -21,6 +21,13 @@ export const config = {
   ttsMaxAttempts: clampInt(process.env.LISTEN_TTS_MAX_ATTEMPTS, 1, 10, 5),
   // How many times a piece may be halved in the attempt to recover it.
   ttsMaxBisect: clampInt(process.env.LISTEN_TTS_MAX_BISECT, 0, 4, 2),
+
+  // How many Live sessions may be open across all requests at once. A piece is
+  // spoken by one session, and a reader asking for an article holds up to
+  // LISTEN_TTS_CONCURRENCY of them, so this is the ceiling on concurrent readers.
+  maxLiveSessions: clampInt(process.env.LISTEN_MAX_LIVE_SESSIONS, 1, 64, 16),
+  // How long a reader waits for a slot before being told the service is busy.
+  maxSlotWaitMs: clampInt(process.env.LISTEN_MAX_SLOT_WAIT_MS, 1000, 300000, 60000),
   /** Gemini returns 24 kHz mono PCM. */
   pcmSampleRate: 24000,
   apiKey: process.env.LISTEN_API_KEY || '',

@@ -14,6 +14,7 @@ import { findSpeechLanguage, defaultForLocale } from './languages.mjs';
 import { liveTts } from './live-tts.mjs';
 import { splitForSynthesis } from './chunk.mjs';
 import { withRetry, bisect } from './retry.mjs';
+import { withSlot } from './semaphore.mjs';
 import { pcmToMp3, pcmSeconds } from './mp3.mjs';
 import { config } from './config.mjs';
 import { digestFor, getCached, putCached, digestUrl, getUrlText, putUrlText } from './store.mjs';
@@ -114,12 +115,14 @@ export async function speak(text) {
  * words from the clip.
  */
 async function speakPiece(piece, depth) {
-  const request = (text) => liveTts({
+  // Each session is one of the globally available slots, so readers queue
+  // behind each other rather than each opening up to ttsConcurrency sockets.
+  const request = (text) => withSlot(() => liveTts({
     text,
     voice: config.ttsVoice,
     model: config.ttsModel,
     timeoutMs: config.ttsTimeoutMs,
-  });
+  }), { limit: config.maxLiveSessions, maxWaitMs: config.maxSlotWaitMs });
 
   return withRetry(() => request(piece), {
     attempts: config.ttsMaxAttempts,
