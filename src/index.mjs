@@ -18,8 +18,7 @@
 import { serve } from '@upstash/workflow';
 import { checkAuth, corsHeaders } from './lib/auth.mjs';
 import { UnsupportedPageError } from './lib/extract.mjs';
-import { readSource, limitText, translateForSpeech, speak } from './lib/pipeline.mjs';
-import { resolveLanguage } from './lib/languages.mjs';
+import { readSource, limitText, translateForSpeech, speak, resolveLanguage } from './lib/pipeline.mjs';
 import { config } from './lib/config.mjs';
 import { digestFor, getCached, putCached } from './lib/store.mjs';
 import { markDone, markFailed, markRunning, putAudio, getMeta, getAudio, isValidRunId } from './lib/store.mjs';
@@ -173,17 +172,50 @@ export default {
 
     if (url.pathname === '/speak' && request.method === 'POST') {
       // A body that is not an object would be parsed as a bare string and
-      // silently treated as "no input", so say so plainly.
-      const contentType = request.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
+      // silently treated as "no input", so say so plainly. A signed callback
+      // from the queue is passed straight through: its payload is the run's
+      // progress, not a request from a reader.
+      if (!isQueueCallback) {
+        const contentType = request.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          return Response.json(
+            { error: 'send JSON with `text` or `url`' },
+            { status: 415, headers: cors },
+          );
+        }
+
         const raw = await request.clone().text();
-        if (raw.trim().startsWith('[') || /^\s*(true|false|null|-?\d)/.test(raw.trim())) {
+        if (raw.length > 20_000) {
+          return Response.json({ error: 'body too large' }, { status: 413, headers: cors });
+        }
+
+        let body;
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          return Response.json({ error: 'invalid JSON' }, { status: 400, headers: cors });
+        }
+
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
           return Response.json(
             { error: 'send a JSON object with `text` or `url`' },
             { status: 400, headers: cors },
           );
         }
+
+        // Refuse a request with nothing to read, here rather than inside the
+        // run, so the reader is told straight away instead of watching a run
+        // that was always going to fail.
+        const hasText = typeof body.text === 'string' && body.text.trim().length > 0;
+        const hasUrl = typeof body.url === 'string' && body.url.trim().length > 0;
+        if (!hasText && !hasUrl) {
+          return Response.json(
+            { error: 'give me something to read: `text` or `url`' },
+            { status: 400, headers: cors },
+          );
+        }
       }
+
       const response = await workflowHandler(request);
 
       if (!isQueueCallback) {

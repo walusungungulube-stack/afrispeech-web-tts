@@ -1,0 +1,93 @@
+/**
+ * The route module itself, loaded and exercised.
+ *
+ * Every other check imports the pipeline directly, so a mistake in the file
+ * that wires the routes to the pipeline would pass all of them. A wrong import
+ * name in index.mjs is exactly that: nothing failed until the server was
+ * started.
+ *
+ * Run with: node test/routes.mjs
+ */
+import assert from 'node:assert/strict';
+
+process.env.LISTEN_API_KEY ||= 'test-key-for-routes';
+
+let passed = 0;
+const check = async (name, fn) => {
+  try { await fn(); passed += 1; console.log(`  ok   ${name}`); }
+  catch (error) { console.log(`  FAIL ${name}\n       ${error.message}`); process.exitCode = 1; }
+};
+
+// Loading is the point: this fails on a bad import before anything is called.
+const { default: worker } = await import('../src/index.mjs');
+
+const call = (path, init = {}) => worker.fetch(new Request(`https://example.test${path}`, {
+  ...init,
+  headers: { 'x-listen-key': 'test-key-for-routes', ...(init.headers || {}) },
+}));
+
+await check('the module loads and exposes a fetch handler', () => {
+  assert.equal(typeof worker.fetch, 'function');
+});
+
+await check('a request without the key is refused', async () => {
+  const response = await worker.fetch(new Request('https://example.test/status?run=wfr_abc123'));
+  assert.equal(response.status, 401);
+});
+
+await check('a bad run id is rejected before any lookup', async () => {
+  const response = await call('/status?run=not-a-run-id');
+  assert.equal(response.status, 400);
+});
+
+await check('an unknown route is a 404, not a crash', async () => {
+  const response = await call('/nope');
+  assert.equal(response.status, 404);
+});
+
+await check('a preflight is answered without the key', async () => {
+  const response = await worker.fetch(new Request('https://example.test/speak', { method: 'OPTIONS' }));
+  assert.equal(response.status, 204);
+});
+
+await check('a body that is not an object is refused plainly', async () => {
+  const response = await call('/speak', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '"just a string"',
+  });
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.match(body.error, /text.*url|url.*text/i);
+});
+
+await check('a non-JSON body is refused', async () => {
+  const response = await call('/speak', {
+    method: 'POST',
+    headers: { 'content-type': 'text/plain' },
+    body: 'hello',
+  });
+  assert.equal(response.status, 415);
+});
+
+await check('a request with nothing to read is refused before a run starts', async () => {
+  for (const body of ['{}', '{"text":""}', '{"text":"   "}', '{"lang":"swh"}']) {
+    const response = await call('/speak', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+    assert.equal(response.status, 400, `${body} should be refused, got ${response.status}`);
+  }
+});
+
+await check('malformed JSON is refused', async () => {
+  const response = await call('/speak', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{"text": "unterminated',
+  });
+  assert.equal(response.status, 400);
+});
+
+console.log(`\n  ${passed} route checks passed`);
