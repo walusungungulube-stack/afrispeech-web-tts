@@ -59,6 +59,25 @@ function describe(failure) {
   return failure.message || 'Something went wrong.';
 }
 
+/* Audio is the one thing a step cannot carry.
+ *
+ * A step's result crosses to the queue as JSON and comes back parsed, and JSON
+ * has no bytes: a Buffer arrives as { type: 'Buffer', data: [...] }. Writing
+ * that to the store encodes the string "[object Object]", which is nine bytes
+ * that decode to noise and are served back as if they were a recording. Text
+ * crosses intact, so audio leaves a step as base64 and is turned back into
+ * bytes on arrival. */
+export function audioOut(mp3) {
+  return { ...mp3, mp3: Buffer.isBuffer(mp3) ? mp3.toString('base64') : mp3 };
+}
+
+export function audioIn(mp3) {
+  if (Buffer.isBuffer(mp3)) return mp3;
+  if (typeof mp3 === 'string') return Buffer.from(mp3, 'base64');
+  if (mp3 && Array.isArray(mp3.data)) return Buffer.from(mp3.data);
+  throw new TypeError('a recording came back from a step as something other than audio');
+}
+
 const workflow = serve(
   async (context) => {
     const runId = context.workflowRunId;
@@ -100,7 +119,7 @@ const workflow = serve(
     if (cached.ok && cached.value) {
       const hit = cached.value;
       await context.run('store-cached', () => attempt(async () => {
-        await putAudio(runId, hit.mp3);
+        await putAudio(runId, audioIn(hit.mp3));
         await markDone(runId, { ...hit.meta, cached: true });
       }));
       return { state: 'done', runId, cached: true };
@@ -115,7 +134,8 @@ const workflow = serve(
       throw new WorkflowNonRetryableError(message);
     }
 
-    const spoken = await context.run('record', () => attempt(() => speak(translated.value.text)));
+    const spoken = await context.run('record', () =>
+      attempt(async () => audioOut(await speak(translated.value.text))));
 
     if (!spoken.ok) {
       const message = describe(spoken);
@@ -123,7 +143,8 @@ const workflow = serve(
       throw new WorkflowNonRetryableError(message);
     }
 
-    const audio = spoken.value;
+    const mp3 = audioIn(spoken.value.mp3);
+    const audio = { ...spoken.value, mp3 };
     const meta = {
       language: translated.value.name,
       languageCode: translated.value.code,
@@ -132,7 +153,7 @@ const workflow = serve(
       truncated: text.truncated,
       via: source.via,
       seconds: Number(audio.seconds.toFixed(2)),
-      bytes: audio.mp3.length,
+      bytes: mp3.length,
       firstByteMs: audio.firstByteMs,
       synthMs: audio.synthMs,
     };
@@ -144,10 +165,10 @@ const workflow = serve(
       model: config.ttsModel,
       kbps: config.mp3Kbps,
       sampleRate: config.mp3SampleRate,
-    }), audio.mp3, { ...meta, pieces: audio.pieces })));
+    }), mp3, { ...meta, pieces: audio.pieces })));
 
     await context.run('store', () => attempt(async () => {
-      await putAudio(runId, audio.mp3);
+      await putAudio(runId, mp3);
       await markDone(runId, meta);
     }));
 

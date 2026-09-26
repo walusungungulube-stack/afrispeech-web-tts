@@ -56,6 +56,25 @@ await check('the language list is offered, so no client has to guess a code', as
   }
 });
 
+await check('audio survives the trip through a step, which is where it used to die', async () => {
+  // What the queue does to a Buffer on the way through: parsed JSON, no bytes.
+  const mp3 = Buffer.from([0xff, 0xfb, 0x90, 0x64, 0x00, 0x01, 0x02, 0x03]);
+  const throughTheQueue = JSON.parse(JSON.stringify({ mp3 })).mp3;
+  assert.equal(Buffer.isBuffer(throughTheQueue), false, 'a Buffer does not survive JSON');
+  assert.equal(String(throughTheQueue.toString('base64')), '[object Object]',
+    'encoding it as the code did produced nine bytes of noise');
+
+  const { audioIn, audioOut } = await import('../src/index.mjs');
+  const back = audioIn(audioOut(mp3).mp3);
+  assert.ok(Buffer.isBuffer(back), 'it comes back as bytes');
+  assert.equal(back.length, mp3.length, 'all of it comes back');
+  assert.deepEqual([...back], [...mp3], 'byte for byte');
+
+  // A cache hit carries its audio the same way, and must not be assumed to be bytes.
+  assert.deepEqual([...audioIn(throughTheQueue)], [...mp3], 'even from parsed JSON');
+  assert.throws(() => audioIn(42), /other than audio/, 'and it says so when it is not audio');
+});
+
 await check('a bad run id is rejected before any lookup', async () => {
   const response = await call('/status?run=not-a-run-id');
   assert.equal(response.status, 400);
