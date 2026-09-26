@@ -102,6 +102,14 @@ const workflow = serve(
 
       return { state: 'done', runId };
     } catch (error) {
+      /* Before it authorises a run, the SDK executes this function once more
+         against a context that refuses every step, to find out whether the
+         caller is allowed to reach one. That rehearsal is not a real attempt
+         and it carries the real run id, so recording a failure here would mark
+         the run broken before it had started. It is recognised by the SDK's own
+         abort error and is passed straight through. */
+      if (error?.name === 'WorkflowAuthError') throw error;
+
       const message = error instanceof UnsupportedPageError
         ? UNSUPPORTED
         : String(error.message || error);
