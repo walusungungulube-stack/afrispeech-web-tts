@@ -68,7 +68,7 @@ const workflow = serve(
     const read = await context.run('read-source', () => attempt(() => readSource(body)));
 
     if (!read.ok) {
-      const message = describe(read.error);
+      const message = describe(read);
       await context.run('report', () => markFailed(runId, message));
       throw new WorkflowNonRetryableError(message);
     }
@@ -77,7 +77,7 @@ const workflow = serve(
     const clipped = await context.run('limit', () => attempt(() => limitText(source.text)));
 
     if (!clipped.ok) {
-      const message = describe(clipped.error);
+      const message = describe(clipped);
       await context.run('report', () => markFailed(runId, message));
       throw new WorkflowNonRetryableError(message);
     }
@@ -109,7 +109,7 @@ const workflow = serve(
       translateForSpeech(text.text, body)));
 
     if (!translated.ok) {
-      const message = describe(translated.error);
+      const message = describe(translated);
       await context.run('report', () => markFailed(runId, message));
       throw new WorkflowNonRetryableError(message);
     }
@@ -117,7 +117,7 @@ const workflow = serve(
     const spoken = await context.run('record', () => attempt(() => speak(translated.value.text)));
 
     if (!spoken.ok) {
-      const message = describe(spoken.error);
+      const message = describe(spoken);
       await context.run('report', () => markFailed(runId, message));
       throw new WorkflowNonRetryableError(message);
     }
