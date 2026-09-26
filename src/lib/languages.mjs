@@ -1,66 +1,17 @@
 /**
  * The languages the Listen feature can actually speak.
  *
- * Two independent code systems have to agree before a language can be offered:
- * afriso (the source of src/data/languages.js) uses ISO 639-3, while Google
- * Translate uses its own short codes. A language is listed here only when
- * afriso knows it AND Google Translate accepts it, so the dropdown can never
- * offer a language the translation step would reject.
+ * Two code systems have to agree before a language can be offered: afriso uses
+ * ISO 639-3, while Google Translate uses its own short codes. A language is
+ * listed here only when both exist, so the dropdown can never offer a language
+ * the translation step would reject.
  *
- * Names and country lists come from afriso rather than being copied, so this
- * table only carries the Google code and the text-to-speech verdict.
+ * The name and country list for each code come from the generated table in
+ * speech-data.mjs, which this repository owns.
  */
 
-import { findLanguage } from '../../../src/data/languages.js';
+import { LANGUAGE_DATA } from './speech-data.mjs';
 
-/** afriso ISO 639-3 -> Google Translate code. */
-const GOOGLE_CODES = {
-  aka: 'ak',   // Akan (Google calls the same continuum "Twi")
-  twi: 'ak',
-  afr: 'af',   // Afrikaans
-  amh: 'am',   // Amharic
-  bci: 'bci',  // Baoule
-  bem: 'bem',  // Bemba
-  wol: 'wo',   // Wolof
-  din: 'din',  // Dinka
-  dov: 'dov',  // Dombe
-  ibo: 'ig',   // Igbo
-  fon: 'fon',  // Fon
-  dyu: 'dyu',  // Dyula
-  ewe: 'ee',   // Ewe
-  ful: 'ff',   // Fulah
-  kon: 'kg',   // Kongo
-  lin: 'ln',   // Lingala
-  luo: 'luo',  // Luo (Kenya and Tanzania)
-  kri: 'kri',  // Krio
-  lg:  'lg',   // Luganda
-  orm: 'om',   // Oromo
-  nso: 'nso',  // Pedi
-  nbl: 'nr',   // South Ndebele
-  nus: 'nus',  // Nuer
-  run: 'rn',   // Rundi
-  sag: 'sg',   // Sango
-  sna: 'sn',   // Shona
-  so:  'so',   // Somali
-  sot: 'st',   // Southern Sotho
-  ssw: 'ss',   // Swati
-  tir: 'ti',   // Tigrinya
-  tsn: 'tn',   // Tswana
-  tso: 'ts',   // Tsonga
-  tum: 'tum',  // Tumbuka
-  ven: 've',   // Venda
-  xho: 'xh',   // Xhosa
-  yor: 'yo',   // Yoruba
-  zul: 'zu',   // Zulu
-  zgh: 'ber',  // Standard Moroccan Tamazight
-  swh: 'sw',   // Swahili (individual language)
-  swa: 'sw',   // Swahili (macrolanguage)
-  crs: 'crs',  // Seselwa Creole French
-  mlg: 'mg',   // Malagasy
-  nya: 'ny',   // Chichewa
-  ndc: 'ndc-ZW', // Ndau
-  tiv: 'tiv',  // Tiv
-};
 
 /**
  * Languages Gemini TTS has been confirmed to pronounce. Anything missing here
@@ -73,18 +24,22 @@ const TTS_CONFIRMED = new Set([]);
 const BY_GOOGLE = new Map();
 const BY_AFRISO = new Map();
 
-export const SPEECH_LANGUAGES = Object.entries(GOOGLE_CODES)
-  .map(([code, google]) => {
-    const entry = findLanguage(code);
-    return entry ? { ...entry, google, tts: TTS_CONFIRMED.has(code) } : null;
-  })
-  .filter(Boolean)
+export const SPEECH_LANGUAGES = Object.entries(LANGUAGE_DATA)
+  .map(([code, entry]) => ({
+    code,
+    name: entry.name,
+    countries: entry.countries,
+    google: entry.google,
+    tts: TTS_CONFIRMED.has(code),
+  }))
   .sort((a, b) => a.name.localeCompare(b.name, 'en'))
   // `aka` and `twi` are the same continuum under two names; offer it once.
   .filter((lang, i, all) => all.findIndex((l) => l.google === lang.google) === i);
 
 for (const lang of SPEECH_LANGUAGES) {
-  if (!BY_GOOGLE.has(lang.google)) BY_GOOGLE.set(lang.google, lang);
+  // Lookups are lowercased, so index that way. Ndau's Google code carries a
+  // region tag ("ndc-ZW") and would otherwise be unreachable by its own code.
+  if (!BY_GOOGLE.has(lang.google.toLowerCase())) BY_GOOGLE.set(lang.google.toLowerCase(), lang);
   if (!BY_AFRISO.has(lang.code)) BY_AFRISO.set(lang.code, lang);
 }
 

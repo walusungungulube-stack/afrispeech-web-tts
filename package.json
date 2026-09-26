@@ -7,8 +7,9 @@
   "main": "src/index.mjs",
   "scripts": {
     "dev": "npx @upstash/qstash dev",
-    "test": "node test/auth.mjs && node test/truncate.mjs",
-    "test:e2e": "node test/e2e.mjs"
+    "test": "node test/auth.mjs && node test/languages.mjs && node test/truncate.mjs",
+    "test:e2e": "node test/e2e.mjs",
+    "build:speech-data": "node scripts/sync-names.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.24.0",
