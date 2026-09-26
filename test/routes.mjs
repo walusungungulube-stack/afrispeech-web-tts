@@ -35,6 +35,23 @@ await check('a request without the key is refused', async () => {
   assert.equal(response.status, 401);
 });
 
+await check('the language list is offered, so no client has to guess a code', async () => {
+  const r = await call('/languages');
+  assert.equal(r.status, 200);
+  const { languages } = await r.json();
+  assert.ok(languages.length >= 40, 'every language is offered');
+  const swahili = languages.find((l) => l.code === 'swh');
+  assert.ok(swahili, 'Swahili is reachable by a code that exists');
+  assert.equal(swahili.google, 'sw');
+  // Guessing a code is the failure this route exists to prevent: an
+  // unrecognised one is not refused, it falls back to English. Every code handed
+  // out here has to therefore be one that comes back as itself.
+  const { resolveLanguage } = await import('../src/lib/pipeline.mjs');
+  for (const l of languages) {
+    assert.equal(resolveLanguage(l.code).code, l.code, `${l.code} resolves to itself`);
+  }
+});
+
 await check('a bad run id is rejected before any lookup', async () => {
   const response = await call('/status?run=not-a-run-id');
   assert.equal(response.status, 400);

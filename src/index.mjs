@@ -19,6 +19,7 @@ import { serve, WorkflowNonRetryableError } from '@upstash/workflow';
 import { checkAuth, corsHeaders } from './lib/auth.mjs';
 import { UnsupportedPageError } from './lib/extract.mjs';
 import { readSource, limitText, translateForSpeech, speak, resolveLanguage } from './lib/pipeline.mjs';
+import { languageCatalogue } from './lib/languages.mjs';
 import { config } from './lib/config.mjs';
 import { digestFor, getCached, putCached } from './lib/store.mjs';
 import { markDone, markFailed, markRunning, putAudio, getMeta, getAudio, isValidRunId } from './lib/store.mjs';
@@ -177,6 +178,17 @@ export default {
     const auth = isQueueCallback ? { ok: true } : checkAuth(request);
     if (!auth.ok) {
       return Response.json({ error: auth.error }, { status: auth.status, headers: cors });
+    }
+
+    /* The list of languages, so a client never has to guess a code. Guessing
+       is worse than it sounds: an unrecognised code is not refused, it falls
+       back to English, so a reader who asked for one language is quietly given
+       another. */
+    if (url.pathname === '/languages' && request.method === 'GET') {
+      return Response.json(
+        { languages: languageCatalogue() },
+        { headers: { ...cors, 'cache-control': 'public, max-age=3600' } },
+      );
     }
 
     if (url.pathname === '/status' && request.method === 'GET') {
