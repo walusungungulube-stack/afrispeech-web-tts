@@ -8,8 +8,9 @@
   "scripts": {
     "dev": "npx @upstash/qstash dev",
     "test": "node test/auth.mjs && node test/chunk.mjs && node test/languages.mjs && node test/parallel.mjs && node test/retry.mjs && node test/truncate.mjs",
-    "test:e2e": "node test/e2e.mjs",
-    "build:speech-data": "node scripts/sync-names.mjs"
+    "test:e2e": "node --env-file-if-exists=.env test/e2e.mjs",
+    "build:speech-data": "node scripts/sync-names.mjs",
+    "test:semaphore": "node --env-file-if-exists=.env test/semaphore.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.24.0",
