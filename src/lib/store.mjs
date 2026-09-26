@@ -87,10 +87,30 @@ export function digestFor({ text, languageCode, voice, model, kbps, sampleRate }
     .slice(0, 32);
 }
 
+/* Whether a stored recording is a recording.
+ *
+ * The cache outlives the code that filled it, so an entry written by a version
+ * that stored the wrong bytes is still here, still valid, and still served for
+ * as long as its entry lives: fourteen days of a nine-byte file that decodes to
+ * noise. Anything that is not recognisably audio is treated as a miss and
+ * thrown away, so a bad entry costs one recording rather than a fortnight. */
+function isAudio(bytes) {
+  if (!bytes || bytes.length < 64) return false;
+  if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return true; // ID3
+  return bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0;                      // frame sync
+}
+
 export async function getCached(digest) {
-  const entry = await redis().get(cacheKey(digest));
+  const key = cacheKey(digest);
+  const entry = await redis().get(key);
   if (!entry) return null;
-  return { mp3: Buffer.from(entry.mp3, 'base64'), meta: entry.meta };
+
+  const mp3 = typeof entry.mp3 === 'string' ? Buffer.from(entry.mp3, 'base64') : null;
+  if (!isAudio(mp3)) {
+    await redis().del(key).catch(() => {});
+    return null;
+  }
+  return { mp3, meta: entry.meta };
 }
 
 export async function putCached(digest, mp3, meta) {

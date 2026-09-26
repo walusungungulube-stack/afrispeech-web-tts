@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict';
 import { synthesise } from '../src/lib/pipeline.mjs';
-import { putAudio, getAudio, markDone, getMeta } from '../src/lib/store.mjs';
+import { putAudio, getAudio, markDone, getMeta, getCached, putCached, digestFor } from '../src/lib/store.mjs';
 import { config } from '../src/lib/config.mjs';
 import { MPEGDecoder } from 'mpg123-decoder';
 
@@ -117,5 +117,46 @@ t('the status payload carries what the widget reads', () => {
     assert.ok(key in status, `status is missing ${key}`);
   }
 });
+
+
+/* A cache entry outlives the code that wrote it, so what is in there now is
+   what a bad build would have left behind. It must be refused as a miss, not
+   served: this is the nine-byte "[object Object]" that a Buffer became on its
+   way through the queue, and it is still a valid key with a live TTL. */
+const poisoned = await getCached(digestFor({
+  text: 'This entry was written by a build that stored the wrong bytes.',
+  languageCode: 'en',
+  voice: config.ttsVoice,
+  model: config.ttsModel,
+  kbps: config.mp3Kbps,
+  sampleRate: config.mp3SampleRate,
+}));
+await putCached(digestFor({
+  text: 'This entry was written by a build that stored the wrong bytes.',
+  languageCode: 'en',
+  voice: config.ttsVoice,
+  model: config.ttsModel,
+  kbps: config.mp3Kbps,
+  sampleRate: config.mp3SampleRate,
+}), Buffer.from('[object Object]'), { seconds: 95, language: 'English' });
+
+const afterPoison = await getCached(digestFor({
+  text: 'This entry was written by a build that stored the wrong bytes.',
+  languageCode: 'en',
+  voice: config.ttsVoice,
+  model: config.ttsModel,
+  kbps: config.mp3Kbps,
+  sampleRate: config.mp3SampleRate,
+}));
+ok('a cache entry that is not audio is refused as a miss, not served', poisoned === null && afterPoison === null);
+ok('and the bad entry is gone rather than left to be found again',
+  await getCached(digestFor({
+    text: 'This entry was written by a build that stored the wrong bytes.',
+    languageCode: 'en',
+    voice: config.ttsVoice,
+    model: config.ttsModel,
+    kbps: config.mp3Kbps,
+    sampleRate: config.mp3SampleRate,
+  })) === null);
 
 console.log(`\n  ${passed} end-to-end checks passed`);
