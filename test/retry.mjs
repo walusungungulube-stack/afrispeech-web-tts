@@ -62,6 +62,18 @@ t('an alternative attempt replaces repeating the same work', async () => {
   assert.equal(calls, 1);
 });
 
+t('an alternative may be the answer rather than another attempt', async () => {
+  // Recovering from a piece that is too long means doing the work differently,
+  // and that work has already produced the result by the time we are called.
+  const recovered = await withRetry(boom('too long'), {
+    attempts: 5,
+    sleep: noSleep,
+    onFailure: (attempt) => (attempt >= 2 ? { pcm: Buffer.from('audio'), pieces: 2 } : null),
+  });
+  assert.equal(recovered.pieces, 2);
+  assert.equal(recovered.pcm.toString(), 'audio');
+});
+
 t('the original error surfaces when the alternative also fails', async () => {
   await assert.rejects(
     withRetry(boom('too long'), {

@@ -23,9 +23,11 @@ export function backoff(attempt, baseMs = DEFAULT_BASE_MS, capMs = 8000) {
 /**
  * Run `attempt`, and if it throws, try again up to `attempts` times in total.
  *
- * `onFailure(attempt, error)` runs before each wait and may return an
- * alternative attempt, which is what lets a long piece be retried as two shorter
- * ones. Returning nothing simply repeats the same work.
+ * `onFailure(attempt, error)` runs before each wait. Return nothing to simply
+ * repeat the same work, a function to run it as the next attempt instead, or a
+ * value to use as the result. Recovering from a long piece means speaking it as
+ * two shorter ones, and the result of that is the answer rather than another
+ * attempt.
  */
 export async function withRetry(attempt_, {
   attempts = 5,
@@ -42,7 +44,12 @@ export async function withRetry(attempt_, {
       if (attempt === attempts) break;
       if (onFailure) {
         const alternative = await onFailure(attempt, error);
-        if (alternative) return alternative(attempt + 1);
+        if (alternative) {
+          /* A function is a different attempt to run. Anything else is already
+             the answer: recovering from a failure often means doing the work a
+             different way, and the caller has that result in hand. */
+          return typeof alternative === 'function' ? alternative(attempt + 1) : alternative;
+        }
       }
       await sleep(backoff(attempt, baseMs));
     }
