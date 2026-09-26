@@ -67,8 +67,12 @@ function describe(failure) {
  * that decode to noise and are served back as if they were a recording. Text
  * crosses intact, so audio leaves a step as base64 and is turned back into
  * bytes on arrival. */
-export function audioOut(mp3) {
-  return { ...mp3, mp3: Buffer.isBuffer(mp3) ? mp3.toString('base64') : mp3 };
+export function audioOut(result) {
+  const mp3 = result && result.mp3;
+  return {
+    ...result,
+    mp3: Buffer.isBuffer(mp3) ? mp3.toString('base64') : mp3,
+  };
 }
 
 export function audioIn(mp3) {

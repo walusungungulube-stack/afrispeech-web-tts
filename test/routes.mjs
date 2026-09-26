@@ -65,7 +65,13 @@ await check('audio survives the trip through a step, which is where it used to d
     'encoding it as the code did produced nine bytes of noise');
 
   const { audioIn, audioOut } = await import('../src/index.mjs');
-  const back = audioIn(audioOut(mp3).mp3);
+  // audioOut is handed what a step returns, which is a result object around the
+  // bytes, not the bytes themselves.
+  const out = audioOut({ mp3, seconds: 95, pieces: 8 });
+  assert.equal(typeof out.mp3, 'string', 'the bytes are left as text');
+  assert.equal(out.seconds, 95, 'and the rest of the result is carried through');
+  assert.equal(out.pieces, 8);
+  const back = audioIn(out.mp3);
   assert.ok(Buffer.isBuffer(back), 'it comes back as bytes');
   assert.equal(back.length, mp3.length, 'all of it comes back');
   assert.deepEqual([...back], [...mp3], 'byte for byte');
