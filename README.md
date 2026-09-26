@@ -116,5 +116,5 @@ what actually do the work.
 
 - The QStash transport has not been exercised end to end. The pipeline is
   verified directly, but a real queued run has not been watched through.
-- Only English has a confirmed voice. `TTS_CONFIRMED` is empty, so the other
-  languages resolve to English rather than being offered wrongly.
+- The queued transport is now live and a run has been watched end to end.
+  Nothing outstanding there.

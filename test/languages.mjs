@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { SPEECH_LANGUAGES, findSpeechLanguage, defaultForLocale, languageCatalogue } from '../src/lib/languages.mjs';
+import { SPEECH_LANGUAGES, OFFERED_LANGUAGES, findSpeechLanguage, defaultForLocale, languageCatalogue } from '../src/lib/languages.mjs';
 
 let passed = 0;
 const t = (name, fn) => {
@@ -56,16 +56,42 @@ t('every country default resolves to a real language', () => {
 });
 
 t('a country default wins over the language half of the locale', () => {
-  // A Kenyan browser is offered Swahili, not English.
-  assert.equal(defaultForLocale('en-KE'), 'en'); // English is unconfirmed, so English
+  // A Kenyan browser is offered Swahili, the country default, rather than
+  // whatever the language half of the locale said.
+  assert.equal(defaultForLocale('en-KE'), 'swh');
+  assert.equal(defaultForLocale('sw-KE'), 'swh');
+  // Somali is mapped, so Somalia and Djibouti have a default of their own.
   const somali = findSpeechLanguage('som');
   assert.equal(somali.google, 'so', 'Somali must be mapped for DJ and SO to have a default');
+  assert.equal(defaultForLocale('so-SO'), 'som');
+  // A country with no default of its own keeps the language half.
+  assert.equal(defaultForLocale('fr-FR'), 'en');
 });
 
-t('an unknown locale falls back to English instead of failing', () => {
-  assert.equal(defaultForLocale('zu-ZA'), 'en');
+t('a locale is read as the country it names', () => {
+  // Zulu is now offerable, so a South African browser is offered Zulu.
+  assert.equal(defaultForLocale('zu-ZA'), 'zul');
+  assert.equal(defaultForLocale('sw-TZ'), 'swh');
+  // Nothing recognisable, or nothing at all, falls back rather than failing.
+  assert.equal(defaultForLocale('xx-XX'), 'en');
   assert.equal(defaultForLocale(''), 'en');
   assert.equal(defaultForLocale(undefined), 'en');
+});
+
+t('every language Google can translate is offered', () => {
+  // There is no per-language voice to confirm: text is pivoted through Thai
+  // and read by the one English voice, so translatability is the whole test.
+  const notOffered = SPEECH_LANGUAGES.filter((l) => !l.tts);
+  assert.deepEqual(notOffered.map((l) => l.name), [],
+    `held back: ${notOffered.map((l) => l.name).join(', ')}`);
+  assert.ok(OFFERED_LANGUAGES.length >= 40, `only ${OFFERED_LANGUAGES.length} offered`);
+});
+
+t('a language can be pulled out without touching the code', () => {
+  // LISTEN_HELD_BACK_LANGUAGES is read at load time, so this checks the
+  // mechanism rather than the outcome.
+  assert.ok(SPEECH_LANGUAGES.length > OFFERED_LANGUAGES.length - 1);
+  assert.ok(OFFERED_LANGUAGES.every((l) => l.google));
 });
 
 t('the catalogue payload carries only what the dropdown needs', () => {

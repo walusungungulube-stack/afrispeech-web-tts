@@ -14,12 +14,21 @@ import { LANGUAGE_DATA } from './speech-data.mjs';
 
 
 /**
- * Languages Gemini TTS has been confirmed to pronounce. Anything missing here
- * is hidden from the dropdown even when Google Translate supports it, because a
- * language the model reads back in an English accent is a worse offer than no
- * offer at all. Filled in from scripts/tts-probe.mjs.
+ * A language is offered when Google Translate can translate it. There is no
+ * per-language voice to confirm: the text is pivoted through Thai and read by
+ * the one English voice, so the abstraction is the translation rather than a
+ * native pronunciation. Probing for a voice per language would gate languages
+ * that work perfectly well already.
+ *
+ * LISTEN_HELD_BACK_LANGUAGES exists for a language that turns out to be
+ * unusable anyway, so it can be pulled out without a code change.
  */
-const TTS_CONFIRMED = new Set([]);
+const HELD_BACK = new Set(
+  String(process.env.LISTEN_HELD_BACK_LANGUAGES || '')
+    .split(',')
+    .map((code) => code.trim().toLowerCase())
+    .filter(Boolean),
+);
 
 const BY_GOOGLE = new Map();
 const BY_AFRISO = new Map();
@@ -30,7 +39,8 @@ export const SPEECH_LANGUAGES = Object.entries(LANGUAGE_DATA)
     name: entry.name,
     countries: entry.countries,
     google: entry.google,
-    tts: TTS_CONFIRMED.has(code),
+    // Every language with a Google code is translatable, and therefore speakable.
+    tts: Boolean(entry.google) && !HELD_BACK.has(entry.google.toLowerCase()),
   }))
   .sort((a, b) => a.name.localeCompare(b.name, 'en'))
   // `aka` and `twi` are the same continuum under two names; offer it once.
@@ -43,7 +53,7 @@ for (const lang of SPEECH_LANGUAGES) {
   if (!BY_AFRISO.has(lang.code)) BY_AFRISO.set(lang.code, lang);
 }
 
-/** Languages the widget may offer: Google-translatable and TTS-proven. */
+/** Languages the widget may offer: the ones that can be translated. */
 export const OFFERED_LANGUAGES = SPEECH_LANGUAGES.filter((l) => l.tts);
 
 /** Resolve an afriso code, a Google code, or an English name. */
