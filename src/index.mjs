@@ -30,46 +30,61 @@ const workflow = serve(
     const runId = context.workflowRunId;
     const body = context.requestPayload || {};
 
-    try {
-      /* Each step is one call into the pipeline, so a failure retries the work
-         that actually failed rather than starting the recording again. */
-      const read = await context.run('read-source', () => readSource(body));
+    /* Each step is one call into the pipeline, so a failure retries the work
+       that actually failed rather than starting the recording again. */
+    const read = await context.run('read-source', () => readSource(body));
 
-      const clipped = await context.run('limit', async () => limitText(read.text));
+    const clipped = await context.run('limit', async () => limitText(read.text));
 
-      // Reuse a recording of exactly this text in exactly this language before
-      // spending a model on it again.
-      const cached = await context.run('check-cache', () =>
-        getCached(digestFor({
-          text: clipped.text,
-          languageCode: resolveLanguage(body.lang, body.locale).code,
-          voice: config.ttsVoice,
-          model: config.ttsModel,
-          kbps: config.mp3Kbps,
-          sampleRate: config.mp3SampleRate,
-        })));
-
-      if (cached) {
-        await context.run('store-cached', async () => {
-          await putAudio(runId, cached.mp3);
-          await markDone(runId, { ...cached.meta, cached: true });
-        });
-        return { state: 'done', runId, cached: true };
-      }
-
-      const translated = await context.run('translate', () =>
-        translateForSpeech(clipped.text, body));
-
-      const spoken = await context.run('record', () => speak(translated.text));
-
-      await context.run('save-cache', () => putCached(digestFor({
+    // Reuse a recording of exactly this text in exactly this language before
+    // spending a model on it again.
+    const cached = await context.run('check-cache', () =>
+      getCached(digestFor({
         text: clipped.text,
-        languageCode: translated.code,
+        languageCode: resolveLanguage(body.lang, body.locale).code,
         voice: config.ttsVoice,
         model: config.ttsModel,
         kbps: config.mp3Kbps,
         sampleRate: config.mp3SampleRate,
-      }), spoken.mp3, {
+      })));
+
+    if (cached) {
+      await context.run('store-cached', async () => {
+        await putAudio(runId, cached.mp3);
+        await markDone(runId, { ...cached.meta, cached: true });
+      });
+      return { state: 'done', runId, cached: true };
+    }
+
+    const translated = await context.run('translate', () =>
+      translateForSpeech(clipped.text, body));
+
+    const spoken = await context.run('record', () => speak(translated.text));
+
+    await context.run('save-cache', () => putCached(digestFor({
+      text: clipped.text,
+      languageCode: translated.code,
+      voice: config.ttsVoice,
+      model: config.ttsModel,
+      kbps: config.mp3Kbps,
+      sampleRate: config.mp3SampleRate,
+    }), spoken.mp3, {
+      language: translated.name,
+      languageCode: translated.code,
+      chars: clipped.text.length,
+      totalChars: clipped.totalChars,
+      truncated: clipped.truncated,
+      via: read.via,
+      seconds: Number(spoken.seconds.toFixed(2)),
+      bytes: spoken.mp3.length,
+      pieces: spoken.pieces,
+      firstByteMs: spoken.firstByteMs,
+      synthMs: spoken.synthMs,
+    }));
+
+    await context.run('store', async () => {
+      await putAudio(runId, spoken.mp3);
+      await markDone(runId, {
         language: translated.name,
         languageCode: translated.code,
         chars: clipped.text.length,
@@ -78,45 +93,37 @@ const workflow = serve(
         via: read.via,
         seconds: Number(spoken.seconds.toFixed(2)),
         bytes: spoken.mp3.length,
-        pieces: spoken.pieces,
         firstByteMs: spoken.firstByteMs,
         synthMs: spoken.synthMs,
-      }));
-
-      await context.run('store', async () => {
-        await putAudio(runId, spoken.mp3);
-        await markDone(runId, {
-          language: translated.name,
-          languageCode: translated.code,
-          chars: clipped.text.length,
-          totalChars: clipped.totalChars,
-          truncated: clipped.truncated,
-          via: read.via,
-          seconds: Number(spoken.seconds.toFixed(2)),
-          bytes: spoken.mp3.length,
-          firstByteMs: spoken.firstByteMs,
-          synthMs: spoken.synthMs,
-        });
       });
+    });
 
-      return { state: 'done', runId };
-    } catch (error) {
-      /* Before it authorises a run, the SDK executes this function once more
-         against a context that refuses every step, to find out whether the
-         caller is allowed to reach one. That rehearsal is not a real attempt
-         and it carries the real run id, so recording a failure here would mark
-         the run broken before it had started. It is recognised by the SDK's own
-         abort error and is passed straight through. */
-      if (error?.name === 'WorkflowAuthError') throw error;
-
-      const message = error instanceof UnsupportedPageError
-        ? UNSUPPORTED
-        : String(error.message || error);
-      await markFailed(runId, message).catch(() => {});
-      throw error;
-    }
+    return { state: 'done', runId };
   },
-  { retries: 2 },
+  {
+    retries: 2,
+
+    /* The SDK unwinds a failed run by throwing through context.run, so the
+       route function above must not catch it: doing so aborts the run instead
+       of letting it fail, and the retry it is entitled to never happens. The
+       failure is recorded here instead, where the SDK hands over the run it
+       has already given up on. */
+    failureFunction: async ({ context: failed, failResponse }) => {
+      /* The SDK hands over the reason as text, so the reason is matched rather
+         than the error object, which no longer exists by this point. A page we
+         cannot read is worth saying plainly, and a page that could not be
+         fetched should not read as though the reader asked for something
+         impossible. */
+      const raw = String(failResponse || '');
+      const message = /UnsupportedPageError|could not be read|no article/i.test(raw)
+        ? UNSUPPORTED
+        : /fetch failed|ENOTFOUND|ECONNREFUSED|timeout|getaddrinfo/i.test(raw)
+          ? 'That page could not be fetched. Check the address and try again.'
+          : (raw || 'Something went wrong.').slice(0, 300);
+
+      await markFailed(failed.workflowRunId, message).catch(() => {});
+    },
+  },
 );
 
 const { handler: workflowHandler } = workflow;
