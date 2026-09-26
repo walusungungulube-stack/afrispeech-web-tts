@@ -36,20 +36,26 @@ async function attempt(work) {
   try {
     return { ok: true, value: await work() };
   } catch (error) {
-    return { ok: false, error };
+    /* A step's result crosses to QStash as JSON, where an Error is just an
+       empty object. Whatever the reader is told has to be decided here, while
+       the error still has its name and message. */
+    return {
+      ok: false,
+      name: (error && error.name) || 'Error',
+      message: String((error && error.message) || error || '').slice(0, 300),
+    };
   }
 }
 
 /* What the reader is told, which is not what the log says. A page that cannot
    be read is worth saying plainly, and a page that could not be fetched should
    not read as though the reader had asked for something impossible. */
-function describe(error) {
-  if (error instanceof UnsupportedPageError) return UNSUPPORTED;
-  const raw = String((error && error.message) || error || '');
-  if (/fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|getaddrinfo|timeout/i.test(raw)) {
+function describe(failure) {
+  if (failure.name === 'UnsupportedPageError') return UNSUPPORTED;
+  if (/fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|getaddrinfo|timeout/i.test(failure.message)) {
     return 'That page could not be fetched. Check the address and try again.';
   }
-  return raw.slice(0, 300) || 'Something went wrong.';
+  return failure.message || 'Something went wrong.';
 }
 
 const workflow = serve(
