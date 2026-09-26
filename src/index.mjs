@@ -15,7 +15,7 @@
  * Run state lives in Redis, which means the browser only ever needs the shared
  * key, never a QStash credential.
  */
-import { serve } from '@upstash/workflow';
+import { serve, WorkflowNonRetryableError } from '@upstash/workflow';
 import { checkAuth, corsHeaders } from './lib/auth.mjs';
 import { UnsupportedPageError } from './lib/extract.mjs';
 import { readSource, limitText, translateForSpeech, speak, resolveLanguage } from './lib/pipeline.mjs';
@@ -25,6 +25,33 @@ import { markDone, markFailed, markRunning, putAudio, getMeta, getAudio, isValid
 
 const UNSUPPORTED = 'Sorry, this webpage is not supported.';
 
+/* A step that reports its own failure, rather than throwing it.
+ *
+ * The SDK unwinds a run by throwing through context.run, so a try/catch around
+ * a step catches that unwind rather than the work: the run is aborted where a
+ * retry belonged, and the retries it is entitled to never happen. Caught inside
+ * the step callback, where the work actually runs, the same error is just an
+ * error again and the run carries on. */
+async function attempt(work) {
+  try {
+    return { ok: true, value: await work() };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
+/* What the reader is told, which is not what the log says. A page that cannot
+   be read is worth saying plainly, and a page that could not be fetched should
+   not read as though the reader had asked for something impossible. */
+function describe(error) {
+  if (error instanceof UnsupportedPageError) return UNSUPPORTED;
+  const raw = String((error && error.message) || error || '');
+  if (/fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|getaddrinfo|timeout/i.test(raw)) {
+    return 'That page could not be fetched. Check the address and try again.';
+  }
+  return raw.slice(0, 300) || 'Something went wrong.';
+}
+
 const workflow = serve(
   async (context) => {
     const runId = context.workflowRunId;
@@ -32,98 +59,94 @@ const workflow = serve(
 
     /* Each step is one call into the pipeline, so a failure retries the work
        that actually failed rather than starting the recording again. */
-    const read = await context.run('read-source', () => readSource(body));
+    const read = await context.run('read-source', () => attempt(() => readSource(body)));
 
-    const clipped = await context.run('limit', async () => limitText(read.text));
+    if (!read.ok) {
+      const message = describe(read.error);
+      await context.run('report', () => markFailed(runId, message));
+      throw new WorkflowNonRetryableError(message);
+    }
+
+    const source = read.value;
+    const clipped = await context.run('limit', () => attempt(() => limitText(source.text)));
+
+    if (!clipped.ok) {
+      const message = describe(clipped.error);
+      await context.run('report', () => markFailed(runId, message));
+      throw new WorkflowNonRetryableError(message);
+    }
+
+    const text = clipped.value;
 
     // Reuse a recording of exactly this text in exactly this language before
     // spending a model on it again.
-    const cached = await context.run('check-cache', () =>
-      getCached(digestFor({
-        text: clipped.text,
-        languageCode: resolveLanguage(body.lang, body.locale).code,
-        voice: config.ttsVoice,
-        model: config.ttsModel,
-        kbps: config.mp3Kbps,
-        sampleRate: config.mp3SampleRate,
-      })));
-
-    if (cached) {
-      await context.run('store-cached', async () => {
-        await putAudio(runId, cached.mp3);
-        await markDone(runId, { ...cached.meta, cached: true });
-      });
-      return { state: 'done', runId, cached: true };
-    }
-
-    const translated = await context.run('translate', () =>
-      translateForSpeech(clipped.text, body));
-
-    const spoken = await context.run('record', () => speak(translated.text));
-
-    await context.run('save-cache', () => putCached(digestFor({
-      text: clipped.text,
-      languageCode: translated.code,
+    const language = resolveLanguage(body.lang, body.locale);
+    const cached = await context.run('check-cache', () => attempt(() => getCached(digestFor({
+      text: text.text,
+      languageCode: language.code,
       voice: config.ttsVoice,
       model: config.ttsModel,
       kbps: config.mp3Kbps,
       sampleRate: config.mp3SampleRate,
-    }), spoken.mp3, {
-      language: translated.name,
-      languageCode: translated.code,
-      chars: clipped.text.length,
-      totalChars: clipped.totalChars,
-      truncated: clipped.truncated,
-      via: read.via,
-      seconds: Number(spoken.seconds.toFixed(2)),
-      bytes: spoken.mp3.length,
-      pieces: spoken.pieces,
-      firstByteMs: spoken.firstByteMs,
-      synthMs: spoken.synthMs,
-    }));
+    }))));
 
-    await context.run('store', async () => {
-      await putAudio(runId, spoken.mp3);
-      await markDone(runId, {
-        language: translated.name,
-        languageCode: translated.code,
-        chars: clipped.text.length,
-        totalChars: clipped.totalChars,
-        truncated: clipped.truncated,
-        via: read.via,
-        seconds: Number(spoken.seconds.toFixed(2)),
-        bytes: spoken.mp3.length,
-        firstByteMs: spoken.firstByteMs,
-        synthMs: spoken.synthMs,
-      });
-    });
+    if (cached.ok && cached.value) {
+      const hit = cached.value;
+      await context.run('store-cached', () => attempt(async () => {
+        await putAudio(runId, hit.mp3);
+        await markDone(runId, { ...hit.meta, cached: true });
+      }));
+      return { state: 'done', runId, cached: true };
+    }
+
+    const translated = await context.run('translate', () => attempt(() =>
+      translateForSpeech(text.text, body)));
+
+    if (!translated.ok) {
+      const message = describe(translated.error);
+      await context.run('report', () => markFailed(runId, message));
+      throw new WorkflowNonRetryableError(message);
+    }
+
+    const spoken = await context.run('record', () => attempt(() => speak(translated.value.text)));
+
+    if (!spoken.ok) {
+      const message = describe(spoken.error);
+      await context.run('report', () => markFailed(runId, message));
+      throw new WorkflowNonRetryableError(message);
+    }
+
+    const audio = spoken.value;
+    const meta = {
+      language: translated.value.name,
+      languageCode: translated.value.code,
+      chars: text.text.length,
+      totalChars: text.totalChars,
+      truncated: text.truncated,
+      via: source.via,
+      seconds: Number(audio.seconds.toFixed(2)),
+      bytes: audio.mp3.length,
+      firstByteMs: audio.firstByteMs,
+      synthMs: audio.synthMs,
+    };
+
+    await context.run('save-cache', () => attempt(() => putCached(digestFor({
+      text: text.text,
+      languageCode: translated.value.code,
+      voice: config.ttsVoice,
+      model: config.ttsModel,
+      kbps: config.mp3Kbps,
+      sampleRate: config.mp3SampleRate,
+    }), audio.mp3, { ...meta, pieces: audio.pieces })));
+
+    await context.run('store', () => attempt(async () => {
+      await putAudio(runId, audio.mp3);
+      await markDone(runId, meta);
+    }));
 
     return { state: 'done', runId };
   },
-  {
-    retries: 2,
-
-    /* The SDK unwinds a failed run by throwing through context.run, so the
-       route function above must not catch it: doing so aborts the run instead
-       of letting it fail, and the retry it is entitled to never happens. The
-       failure is recorded here instead, where the SDK hands over the run it
-       has already given up on. */
-    failureFunction: async ({ context: failed, failResponse }) => {
-      /* The SDK hands over the reason as text, so the reason is matched rather
-         than the error object, which no longer exists by this point. A page we
-         cannot read is worth saying plainly, and a page that could not be
-         fetched should not read as though the reader asked for something
-         impossible. */
-      const raw = String(failResponse || '');
-      const message = /UnsupportedPageError|could not be read|no article/i.test(raw)
-        ? UNSUPPORTED
-        : /fetch failed|ENOTFOUND|ECONNREFUSED|timeout|getaddrinfo/i.test(raw)
-          ? 'That page could not be fetched. Check the address and try again.'
-          : (raw || 'Something went wrong.').slice(0, 300);
-
-      await markFailed(failed.workflowRunId, message).catch(() => {});
-    },
-  },
+  { retries: 2 },
 );
 
 const { handler: workflowHandler } = workflow;
