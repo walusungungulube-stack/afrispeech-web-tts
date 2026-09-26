@@ -25,7 +25,10 @@ const CACHE_VERSION = 'v1';
 const cacheKey = (digest) => `listen:cache:${CACHE_VERSION}:${digest}`;
 
 let client = null;
-function redis() {
+
+/** The one client, created on first use. Also used by the slot counter, which
+ *  has to reach the same database the runs are recorded in. */
+export function redis() {
   if (!client) {
     const url = process.env.UPSTASH_REDIS_REST_URL;
     const token = process.env.UPSTASH_REDIS_REST_TOKEN;
