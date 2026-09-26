@@ -4,6 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { truncateToLimit } from '../src/lib/truncate.mjs';
+import { readSource } from '../src/lib/pipeline.mjs';
 
 const LIMIT = 1000;
 const sentence = 'The committee published its quarterly statement on monetary policy. ';
@@ -52,3 +53,16 @@ t('a limit of exactly the input length does not mark it truncated', () => {
 });
 
 console.log(`\n  ${passed} truncation checks passed`);
+
+/* A reader who types a sentence and is told the webpage is not supported has
+   been told a true thing about the wrong subject. */
+t('a single typed sentence is something to read out', async () => {
+  const short = await readSource({ text: 'Habari yako. Karibu Nairobi.', lang: 'swh' });
+  assert.equal(short.text, 'Habari yako. Karibu Nairobi.');
+  assert.equal(short.via, 'client', 'it came from the reader, not from a page');
+});
+
+t('whitespace is not something to read out', async () => {
+  await assert.rejects(() => readSource({ text: '   \n  ', lang: 'swh' }), /neither text nor an address/);
+});
+

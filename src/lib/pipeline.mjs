@@ -21,7 +21,10 @@ import { digestFor, getCached, putCached, digestUrl, getUrlText, putUrlText } fr
 
 /** Step 1: the words. The widget sends text it read itself; a shared link sends a URL. */
 export async function readSource({ text, url, title } = {}) {
-  if (typeof text === 'string' && text.trim().length >= 200) {
+  /* Any text at all is something to read out. A minimum length here used to mean
+     that a reader who typed a sentence was told the webpage was not supported,
+     which is a true statement about the wrong thing entirely. */
+  if (typeof text === 'string' && text.trim().length > 0) {
     return { text, title: String(title || ''), via: 'client' };
   }
   if (typeof url === 'string' && url.trim()) {
@@ -33,7 +36,9 @@ export async function readSource({ text, url, title } = {}) {
     await putUrlText(digestUrl(address), article.text).catch(() => {});
     return { text: article.text, title: article.title, via: 'server' };
   }
-  throw new UnsupportedPageError();
+  throw new UnsupportedPageError(
+    'Nothing to read: the request carried neither text nor an address.',
+  );
 }
 
 /** Step 2: cap the length, preferring to finish on a full stop. */
