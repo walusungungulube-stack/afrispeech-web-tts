@@ -17,104 +17,40 @@
  */
 import { serve } from '@upstash/workflow';
 import { checkAuth, corsHeaders } from './lib/auth.mjs';
-import { config } from './lib/config.mjs';
-import { truncateToLimit } from './lib/truncate.mjs';
-import { translate } from './lib/translate.mjs';
-import { extractArticle, UnsupportedPageError } from './lib/extract.mjs';
-import { findSpeechLanguage, defaultForLocale } from './lib/languages.mjs';
-import { liveTts } from './lib/live-tts.mjs';
-import { pcmToMp3, pcmSeconds } from './lib/mp3.mjs';
-import { markRunning, markDone, markFailed, putAudio, getMeta, getAudio, isValidRunId } from './lib/store.mjs';
+import { UnsupportedPageError } from './lib/extract.mjs';
+import { readSource, limitText, translateForSpeech, speak } from './lib/pipeline.mjs';
+import { markDone, markFailed, putAudio, getMeta, getAudio, isValidRunId } from './lib/store.mjs';
 
 const UNSUPPORTED = 'Sorry, this webpage is not supported.';
 
-/** Pick a language, defaulting from the reader's locale. */
-function resolveLanguage(requested, locale) {
-  if (String(requested || '').toLowerCase() === 'en') {
-    return { code: 'en', name: 'English', google: 'en' };
-  }
-  const found = findSpeechLanguage(requested);
-  if (found?.tts) return found;
-  const fallback = findSpeechLanguage(defaultForLocale(locale));
-  if (fallback?.tts) return fallback;
-  return { code: 'en', name: 'English', google: 'en' };
-}
-
 const workflow = serve(
   async (context) => {
-    const { runId } = { runId: context.workflowRunId };
+    const runId = context.workflowRunId;
     const body = context.requestPayload || {};
 
     try {
-      /* 1. Get the words. The widget sends text it already extracted; a shared
-            link sends a URL for us to read. */
-      const source = await context.run('read-source', async () => {
-        if (typeof body.text === 'string' && body.text.trim().length >= 200) {
-          return { text: body.text, title: String(body.title || ''), via: 'client' };
-        }
-        if (typeof body.url === 'string' && body.url.trim()) {
-          try {
-            const article = await extractArticle(body.url.trim());
-            return { text: article.text, title: article.title, via: 'server' };
-          } catch (error) {
-            if (error instanceof UnsupportedPageError) return { unsupported: true };
-            throw error;
-          }
-        }
-        return { unsupported: true };
-      });
+      /* Each step is one call into the pipeline, so a failure retries the work
+         that actually failed rather than starting the recording again. */
+      const read = await context.run('read-source', () => readSource(body));
 
-      if (source.unsupported) {
-        await markFailed(runId, UNSUPPORTED);
-        return { state: 'error', error: UNSUPPORTED };
-      }
+      const clipped = await context.run('limit', async () => limitText(read.text));
 
-      /* 2. Cap the length, preferring to finish on a full stop. */
-      const clipped = await context.run('truncate', async () =>
-        truncateToLimit(source.text, config.maxChars));
+      const translated = await context.run('translate', () =>
+        translateForSpeech(clipped.text, body));
 
-      /* 3. Always pivot through Thai. Google's direct pairings are uneven
-            between the African languages, and Thai is the tested path. */
-      const language = resolveLanguage(body.lang, body.locale);
-      const translated = await context.run('translate', async () => ({
-        text: await translate(clipped.text, language.google, body.source || 'auto'),
-        name: language.name,
-        code: language.code,
-      }));
-
-      /* 4. Speak it, then encode. */
-      const spoken = await context.run('synthesise', async () => {
-        const result = await liveTts({
-          text: translated.text,
-          voice: config.ttsVoice,
-          model: config.ttsModel,
-          timeoutMs: config.ttsTimeoutMs,
-        });
-        const mp3 = await pcmToMp3(result.pcm, {
-          sampleRate: config.pcmSampleRate,
-          kbps: config.mp3Kbps,
-          outRate: config.mp3SampleRate,
-        });
-        return {
-          bytes: mp3.length,
-          seconds: pcmSeconds(result.pcm, config.pcmSampleRate),
-          firstByteMs: result.firstByteMs,
-          synthMs: result.totalMs,
-          base64: mp3.toString('base64'),
-        };
-      });
+      const spoken = await context.run('record', () => speak(translated.text));
 
       await context.run('store', async () => {
-        await putAudio(runId, Buffer.from(spoken.base64, 'base64'));
+        await putAudio(runId, spoken.mp3);
         await markDone(runId, {
-          seconds: Number(spoken.seconds.toFixed(2)),
-          bytes: spoken.bytes,
           language: translated.name,
           languageCode: translated.code,
           chars: clipped.text.length,
           totalChars: clipped.totalChars,
           truncated: clipped.truncated,
-          via: source.via,
+          via: read.via,
+          seconds: Number(spoken.seconds.toFixed(2)),
+          bytes: spoken.mp3.length,
           firstByteMs: spoken.firstByteMs,
           synthMs: spoken.synthMs,
         });
@@ -122,14 +58,14 @@ const workflow = serve(
 
       return { state: 'done', runId };
     } catch (error) {
-      const message = error instanceof UnsupportedPageError ? UNSUPPORTED : String(error.message || error);
+      const message = error instanceof UnsupportedPageError
+        ? UNSUPPORTED
+        : String(error.message || error);
       await markFailed(runId, message).catch(() => {});
       throw error;
     }
   },
-  {
-    retries: 2,
-  },
+  { retries: 2 },
 );
 
 const { handler: workflowHandler } = workflow;

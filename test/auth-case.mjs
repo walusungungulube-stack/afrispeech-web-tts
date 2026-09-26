@@ -4,7 +4,9 @@ const env = { none: {}, key: { LISTEN_API_KEY: 'secret-abc' },
   origins: { LISTEN_API_KEY: 'secret-abc', LISTEN_ALLOWED_ORIGINS: 'https://afrispeech.com, https://www.afrispeech.com' },
   wild: { LISTEN_API_KEY: 'secret-abc', LISTEN_ALLOWED_ORIGINS: '*' } }[which];
 for (const [k, v] of Object.entries(env)) process.env[k] = v;
-const { checkAuth, corsHeaders } = await import('/workspace/home/afrispeech-web-tts/src/lib/auth.mjs');
+// Resolved relative to this file so the suite works from any checkout.
+const target = new URL('../src/lib/auth.mjs', import.meta.url).href;
+const { checkAuth, corsHeaders } = await import(target);
 const req = (h) => new Request('https://x/speak', { headers: h });
 const out = {
   noKeyFailsClosed: checkAuth(req({ 'x-listen-key': 'x' })).status,
