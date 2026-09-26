@@ -38,6 +38,10 @@ await check('a request without the key is refused', async () => {
 await check('the language list is offered, so no client has to guess a code', async () => {
   const r = await call('/languages');
   assert.equal(r.status, 200);
+  // Offered without a key, because a client needs it before it has anything
+  // else, and it is the one answer here that costs nothing to give away.
+  const open = await worker.fetch(new Request('https://example.test/languages'));
+  assert.equal(open.status, 200);
   const { languages } = await r.json();
   assert.ok(languages.length >= 40, 'every language is offered');
   const swahili = languages.find((l) => l.code === 'swh');

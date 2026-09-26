@@ -168,6 +168,19 @@ export default {
       return new Response(null, { status: 204, headers: cors });
     }
 
+    /* The list of languages, so a client never has to guess a code. Guessing is
+       worse than it sounds: an unrecognised code is not refused, it falls back
+       to English, so a reader who asked for one language is quietly given
+       another. It is the one answer here that costs nothing to give away, and a
+       client needs it before it has anything else, so it is not behind the key.
+       The origin allowlist still applies. */
+    if (url.pathname === '/languages' && request.method === 'GET') {
+      return Response.json(
+        { languages: languageCatalogue() },
+        { headers: { ...cors, 'cache-control': 'public, max-age=3600' } },
+      );
+    }
+
     /* A signed callback from the queue carries no shared key: it is the queue
        re-entering the handler for the next step, signed and verified by the
        workflow SDK. Holding it to the browser's key would fail every step after
@@ -178,17 +191,6 @@ export default {
     const auth = isQueueCallback ? { ok: true } : checkAuth(request);
     if (!auth.ok) {
       return Response.json({ error: auth.error }, { status: auth.status, headers: cors });
-    }
-
-    /* The list of languages, so a client never has to guess a code. Guessing
-       is worse than it sounds: an unrecognised code is not refused, it falls
-       back to English, so a reader who asked for one language is quietly given
-       another. */
-    if (url.pathname === '/languages' && request.method === 'GET') {
-      return Response.json(
-        { languages: languageCatalogue() },
-        { headers: { ...cors, 'cache-control': 'public, max-age=3600' } },
-      );
     }
 
     if (url.pathname === '/status' && request.method === 'GET') {
