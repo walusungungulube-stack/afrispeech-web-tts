@@ -10,6 +10,7 @@
 import { extractArticle, UnsupportedPageError } from './extract.mjs';
 import { truncateToLimit } from './truncate.mjs';
 import { translate } from './translate.mjs';
+import { stillInThai } from './pivot.mjs';
 import { findSpeechLanguage, defaultForLocale } from './languages.mjs';
 import { liveTts } from './live-tts.mjs';
 import { splitForSynthesis } from './chunk.mjs';
@@ -44,6 +45,36 @@ export async function readSource({ text, url, title } = {}) {
 /** Step 2: cap the length, preferring to finish on a full stop. */
 export function limitText(text) {
   return truncateToLimit(text, config.maxChars);
+}
+
+/**
+ * Translate, and check that the pivot out of Thai actually happened.
+ *
+ * Asking Google for a language it will not produce is not an error: it returns
+ * the Thai it was given, with nothing in the response to say so. Left alone,
+ * that Thai is recorded, labelled with the language the reader asked for, and
+ * cached under it. So the answer is checked, and asked for again when it is
+ * still Thai, because this failure is not consistent enough to accept the first
+ * time it appears.
+ *
+ * @param {string} text    source text, already clipped
+ * @param {object} request `{ lang, locale, source }`
+ * @param {number} [attempts] how many times to ask before giving up
+ * @param {Function} [translate] seam, so the checks can drive it
+ * @returns {Promise<{text: string, name: string, code: string, detected: string|null}>}
+ */
+export async function translateOutOfThai(text, request = {}, attempts = 3, translate = translateForSpeech) {
+  const language = resolveLanguage(request.lang, request.locale);
+
+  for (let ask = 1; ask <= attempts; ask += 1) {
+    const result = await translate(text, request);
+    if (!stillInThai(result.text, language.google)) return result;
+  }
+
+  throw new Error(
+    `the translation came back in Thai after ${attempts} attempts, so the pivot into `
+    + `${language.name} did not take`,
+  );
 }
 
 /** Step 3: pick a language and translate, always pivoting through Thai. */

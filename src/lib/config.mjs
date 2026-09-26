@@ -22,6 +22,10 @@ export const config = {
   // How many times a piece may be halved in the attempt to recover it.
   ttsMaxBisect: clampInt(process.env.LISTEN_TTS_MAX_BISECT, 0, 4, 2),
 
+  // How many times translation is asked again when the pivot out of Thai did not
+  // take, which Google reports by handing back the Thai it was given.
+  translateAttempts: clampInt(process.env.LISTEN_TRANSLATE_ATTEMPTS, 1, 6, 3),
+
   // How many Live sessions may be open across all requests at once. A piece is
   // spoken by one session, and a reader asking for an article holds up to
   // LISTEN_TTS_CONCURRENCY of them, so this is the ceiling on concurrent readers.

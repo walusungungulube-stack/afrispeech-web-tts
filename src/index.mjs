@@ -18,7 +18,7 @@
 import { serve, WorkflowNonRetryableError } from '@upstash/workflow';
 import { checkAuth, corsHeaders } from './lib/auth.mjs';
 import { UnsupportedPageError } from './lib/extract.mjs';
-import { readSource, limitText, translateForSpeech, speak, resolveLanguage } from './lib/pipeline.mjs';
+import { readSource, limitText, translateOutOfThai, speak, resolveLanguage } from './lib/pipeline.mjs';
 import { languageCatalogue } from './lib/languages.mjs';
 import { config } from './lib/config.mjs';
 import { digestFor, getCached, putCached } from './lib/store.mjs';
@@ -53,7 +53,13 @@ async function attempt(work) {
    not read as though the reader had asked for something impossible. */
 function describe(failure) {
   if (failure.name === 'UnsupportedPageError') return UNSUPPORTED;
-  if (/fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|getaddrinfo|timeout/i.test(failure.message)) {
+  if (/came back in Thai/.test(failure.message)) {
+    return 'This article could not be translated into the language you chose. Please try again.';
+  }
+  if (/translate: HTTP 5|fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|getaddrinfo|timeout/i.test(failure.message)) {
+    return 'The translation service is not answering properly just now. Please try again.';
+  }
+  if (/HTTP 4|not found|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|getaddrinfo/i.test(failure.message)) {
     return 'That page could not be fetched. Check the address and try again.';
   }
   return failure.message || 'Something went wrong.';
@@ -129,8 +135,8 @@ const workflow = serve(
       return { state: 'done', runId, cached: true };
     }
 
-    const translated = await context.run('translate', () => attempt(() =>
-      translateForSpeech(text.text, body)));
+    const translated = await context.run('translate', () =>
+      attempt(() => translateOutOfThai(text.text, body, config.translateAttempts)));
 
     if (!translated.ok) {
       const message = describe(translated);
