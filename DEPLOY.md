@@ -160,20 +160,33 @@ The allowlist is a browser check, and it only binds browsers. A request with no
 this is the wrong thing to point a security argument at. What actually bounds
 spend is in `ratelimit.mjs`:
 
-| Limit | Default | Scope |
+| Limit | This deployment | Scope |
 | --- | --- | --- |
 | `LISTEN_RATE_PER_MINUTE` | 5 | per client IP |
 | `LISTEN_RATE_PER_DAY` | 100 | per client IP |
-| `LISTEN_BUDGET_PER_DAY` | 5000 | everyone, together |
+| `LISTEN_MAX_LIVE_SESSIONS` | 16 | everyone, concurrently |
 
 The per-client IP comes from `cf-connecting-ip`, which on Workers is set by
-Cloudflare and cannot be forged by the caller. So opening the allowlist bounds
-the damage rather than removing the bound: one visitor can spend at most 100
-runs a day, and everything together at most 5000.
+Cloudflare and cannot be forged by the caller.
 
-A deployment that is not public should still narrow it, and the honest reason is
-not cost. It is that an allowlist you control is how you find out who your
-service is being used from.
+`LISTEN_BUDGET_PER_DAY`, which capped the whole service at 5000 runs a day, is
+**off** here, set to 0. That was a deliberate choice, and it is the one place
+this configuration is weaker than the code's defaults, so it is worth stating
+plainly rather than discovering later:
+
+- the two per-address limits are bypassed by rotating address, which the budget
+  was not;
+- so there is now no ceiling on total daily spend. What remains is 16 concurrent
+  runs, from `pipeline.mjs`, which bounds how fast the quota can be drained but
+  not how much of it can be spent over a day.
+
+A deployment that is not public should set it, and a public one should decide
+knowing that the daily ceiling is the only limit that cannot be rotated past.
+The code is unchanged and the switch is still there; only the value is 0.
+
+An allowlist you control is also how you find out who is using the service, and
+`*` gives that up. If per-site attribution is ever wanted, the way back is a key
+per site rather than an origin per site.
 
 ### The encoder, and why there is a staging script
 
