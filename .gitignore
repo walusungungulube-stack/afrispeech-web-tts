@@ -13,3 +13,5 @@ node_modules/
 # Not committed: the rule that compiles it cannot reach inside node_modules,
 # and the installed dependency stays the one source of truth.
 src/lib/mp3.wasm
+__pycache__/
+*.pyc
