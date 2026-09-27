@@ -12,7 +12,13 @@ async function attempt(work) { try { return { ok: true, value: await work() }; }
 export function describe(failure) { if (/quota|rate limit|RESOURCE_EXHAUSTED|\b429\b|\b503\b|UNAVAILABLE|overloaded|capacity/i.test(failure.message)) return "The speech service is busy just now. Please try again in a moment."; if (/ETIMEDOUT|timeout|ECONNRESET|fetch failed|ENOTFOUND|ECONNREFUSED|socket|disconnect/i.test(failure.message)) return "The connection to the speech service dropped. Please try again."; return failure.message || "Something went wrong."; }
 export function audioOut(result) { const mp3 = result && result.mp3; return { ...result, mp3: Buffer.isBuffer(mp3) ? mp3.toString("base64") : mp3 }; }
 export function audioIn(mp3) { if (Buffer.isBuffer(mp3)) return mp3; if (typeof mp3 === "string") return Buffer.from(mp3, "base64"); if (mp3 && Array.isArray(mp3.data)) return Buffer.from(mp3.data); throw new TypeError("a recording came back as something other than audio"); }
-function generateRunId() { const bytes = crypto.getRandomValues(new Uint8Array(16)); return "wfr_" + Buffer.from(bytes).toString("base64").replace(/=/g, "").slice(0, 20); }
+function generateRunId() {
+  // base64url, not base64: a plain base64 id carries + and /, which a query
+  // string reads as a space and a path, and which fails the run-id check the
+  // service itself applies — a run was created and then unreachable by its own
+  // id.
+  return "wfr_" + Buffer.from(crypto.getRandomValues(new Uint8Array(12))).toString("base64url");
+}
 async function runSynthesis(runId, body) {
   const read = await attempt(() => readSource(body));
   if (!read.ok) { markFailed(runId, describe(read)); return; }
