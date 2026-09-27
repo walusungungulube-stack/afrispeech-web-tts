@@ -8,3 +8,8 @@ node_modules/
 
 # wrangler local state and build output
 .wrangler/
+
+# The MP3 encoder, staged from node_modules by scripts/stage-wasm.mjs.
+# Not committed: the rule that compiles it cannot reach inside node_modules,
+# and the installed dependency stays the one source of truth.
+src/lib/mp3.wasm

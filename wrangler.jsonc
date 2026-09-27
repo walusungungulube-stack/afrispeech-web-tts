@@ -1,9 +1,18 @@
 {
   "name": "afrispeech-listen",
-  "main": "src/index.mjs",
+  "account_id": "ebe9bb8c8ad59c5bfe074bf7a1234755",
+  "main": "src/worker.mjs",
   "compatibility_date": "2025-09-01",
   "compatibility_flags": [
     "nodejs_compat"
+  ],
+  "rules": [
+    {
+      "type": "CompiledWasm",
+      "globs": [
+        "**/mp3.wasm"
+      ]
+    }
   ],
   "observability": {
     "enabled": true
@@ -11,7 +20,6 @@
   "vars": {
     "GEMINI_TTS_MODEL": "gemini-3.1-flash-live-preview",
     "GEMINI_TTS_VOICE": "Zephyr",
-    "LISTEN_ALLOWED_ORIGINS": "https://afrispeech.com,https://www.afrispeech.com",
     "LISTEN_BUDGET_PER_DAY": "5000",
     "LISTEN_CACHE_TTL_SECONDS": "1209600",
     "LISTEN_MAX_CHARS": "1000",
@@ -27,5 +35,6 @@
     "LISTEN_TTS_MAX_ATTEMPTS": "5",
     "LISTEN_TTS_MAX_BISECT": "2",
     "LISTEN_TTS_TIMEOUT_MS": "120000"
-  }
+  },
+  "comment": "LISTEN_ALLOWED_ORIGINS is deliberately not in vars: it differs per deployment, so set it with `wrangler secret put LISTEN_ALLOWED_ORIGINS`."
 }
