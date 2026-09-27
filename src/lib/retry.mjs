@@ -24,6 +24,22 @@ const DEFAULT_BASE_MS = 400;
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * How long the service itself said to wait, in milliseconds, or null.
+ *
+ * A per-minute quota is refused with the answer in the refusal: "Please retry
+ * in 31.7s". That is the one authority on when the same request will succeed,
+ * and honouring it is the difference between a retry that works and one that
+ * burns attempts against a cap that has not reset yet. A hard quota says the
+ * same words but carries no retry-in, so it parses to null and stays refused.
+ */
+export function retryDelayMs(error) {
+  const text = String(error?.message ?? error ?? '');
+  const match = text.match(/retry in ([\d.]+)s/i);
+  if (!match) return null;
+  return Math.ceil(Number(match[1]) * 1000) + 2_000;
+}
+
 /** Exponential backoff with a ceiling, so a long wait never becomes minutes. */
 export function backoff(attempt, baseMs = DEFAULT_BASE_MS, capMs = 8000) {
   return Math.min(baseMs * 2 ** (attempt - 1), capMs);
@@ -66,7 +82,8 @@ export async function withRetry(attempt_, {
           return typeof alternative === 'function' ? alternative(attempt + 1) : alternative;
         }
       }
-      await sleep(backoff(attempt, baseMs));
+      const stated = retryDelayMs(error);
+      await sleep(stated === null ? backoff(attempt, baseMs) : Math.max(stated, backoff(attempt, baseMs)));
     }
   }
   throw lastError;

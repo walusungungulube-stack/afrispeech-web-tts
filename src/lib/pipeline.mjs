@@ -20,6 +20,7 @@ import { stillInThai } from './pivot.mjs';
 import { findSpeechLanguage, defaultForLocale } from './languages.mjs';
 import { liveTts } from './live-tts.mjs';
 import { geminiTts, isQuotaError } from './gemini.mjs';
+import { retryDelayMs } from './retry.mjs';
 import { splitForSynthesis } from './chunk.mjs';
 import { withRetry, bisect } from './retry.mjs';
 import { withSlot } from './semaphore.mjs';
@@ -188,7 +189,10 @@ async function speakPiece(piece, depth, language) {
 
   return withRetry(() => request(piece), {
     attempts: config.ttsMaxAttempts,
-    shouldRetry: (error) => !isQuotaError(error),
+    // A per-minute quota carries the answer in the refusal — "retry in 31s" —
+    // so it is worth waiting for. A hard quota carries no such promise, and
+    // repeating it would only spend attempts other readers are owed.
+    shouldRetry: (error) => !isQuotaError(error) || retryDelayMs(error) !== null,
     onFailure: async (attempt, error) => {
       if (attempt < 2 || depth >= config.ttsMaxBisect) return null;
       const halves = bisect(piece);
