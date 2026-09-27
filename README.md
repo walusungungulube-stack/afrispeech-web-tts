@@ -239,9 +239,8 @@ A request does not wait for audio. `POST /speak` hands the job to an Upstash
 Workflow and immediately returns a run id, so nothing times out behind a long
 article. The client polls `/status` and collects the audio when it is ready.
 
-Inside the run: the page is fetched and reduced to its article text, clipped to
-a length cap, translated through Thai, and spoken by Gemini Live in pieces that
-are joined into one MP3. Each piece is retried on failure and halved if it keeps
+Inside the run: the text that was sent is clipped to a length cap, translated
+through Thai, and spoken by Gemini Live in pieces that are joined into one MP3. Each piece is retried on failure and halved if it keeps
 failing, because a piece that is too long for the model to hold open is the
 common case rather than the exceptional one.
 
