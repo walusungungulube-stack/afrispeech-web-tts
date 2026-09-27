@@ -6,20 +6,20 @@ Drop one script tag on your site and readers get a **Listen** button that reads
 the page they are on, translated into any of 43 African languages and spoken
 aloud. No build step, no framework, no SDK to install.
 
-## Before you integrate this: the public endpoint is for testing
+## Before you integrate this: it is your endpoint, not a shared one
 
-The deployment at `listen.example.org` synthesises
-speech by opening a **Gemini Live** session with an API key that this project
-pays for. That budget is shared, finite, and yours cannot be billed against it.
+This repository is code to deploy, not a service to point at. Whoever runs an
+instance pays for the model calls themselves, so what an instance can serve is
+bounded by their plan rather than by anyone else's. `GET /languages` carries the
+same statement as `notice`, so an integration reads it rather than has to know
+it:
 
-Use it to develop and to demonstrate the widget. Do not point production
-traffic at it. A reader who presses the button on a page with real readers on it
-is spending this project's quota, and when it runs out they get an error, not a
-clip. The same notice is returned in the first API response, as `notice` on
-`GET /languages`, so an integration reads it rather than has to know it.
+```json
+{ "notice": { "status": "self-hosted", "message": "...", "production": "..." } }
+```
 
-For production, see [Running it yourself](#running-it-yourself) below. The short
-version: call Gemini from your own backend with your own paid key.
+The short version is in [Running it yourself](#running-it-yourself) below: deploy
+it with your own keys, and keep the paid ones server-side.
 
 ## Add it to your page
 
@@ -27,7 +27,7 @@ Put this in the `<head>` of any page with article text on it:
 
 ```html
 <script
-  src="https://cdn.example.org/afrispeech-listen.js"
+  src="https://cdn.example.org/listen.js"
   data-endpoint="https://listen.example.org"
   defer></script>
 ```
@@ -51,7 +51,7 @@ All optional, set on the script tag:
 
 ```html
 <script
-  src="https://cdn.example.org/afrispeech-listen.js"
+  src="https://cdn.example.org/listen.js"
   data-lang="swh"
   data-position="bottom-left"
   data-label="Soma"
@@ -74,10 +74,8 @@ that is not allowed gets no error you can read: the page loads, the button
 appears, and pressing it does nothing. Worth knowing about, because it is the
 one thing that can stop an integration working and it fails quietly.
 
-Ours accepts any origin, so pointing the widget at it is the script tag above
-and nothing else. Use it from your site, a colleague's, or your own notes.
-
-If you run your own service, narrow it to the origins you expect:
+If you run your own service — which is the only way to run one — narrow it to
+the origins you expect:
 
     wrangler secret put LISTEN_ALLOWED_ORIGINS
     # comma-separated origins, or * for any
@@ -86,8 +84,8 @@ Check which situation you are in by loading your page and watching the network
 tab for the `/languages` request the widget makes on load. A `200` means you are
 allowed. A CORS error, or no request at all, means you are not.
 
-That same response carries the `notice` field. If it says `testing-only`, you are
-pointed at our shared budget, and the next section is the part that matters.
+That same response carries the `notice` field, and a service you did not deploy
+will say so there.
 
 ## Build your own player
 
@@ -96,9 +94,7 @@ button yourself, this is the whole contract.
 
 Base URL: `https://listen.example.org`
 
-That is a `workers.dev` address, which is what this deployment publishes to. It
-has no custom domain behind it, so there is nothing to point DNS at and nothing
-to renew.
+Use whatever address your deployment publishes to.
 
 ### 1. List the languages
 
@@ -147,10 +143,15 @@ x-listen-key: <your key>
 ```
 
 ```json
-{ "state": "done", "language": "Swahili", "languageCode": "swh", "chars": 998,
-  "totalChars": 96384, "truncated": true, "via": "cache", "seconds": 104.4,
-  "bytes": 313524, "runId": "wfr_..." }
+{ "state": "done", "language": "Swahili", "languageCode": "swh", "chars": 863,
+  "totalChars": 4719, "truncated": true, "via": "readability", "cached": false,
+  "seconds": 54.56, "bytes": 163712, "firstByteMs": 570, "synthMs": 20900,
+  "pieces": 7, "runId": "wfr_..." }
 ```
+
+`seconds` is the length of the recording, `bytes` its size, and `pieces` how many
+segments the page was spoken in. A hit on the audio cache reports the original
+recording's timings and `cached: true`.
 
 `state` is `queued`, `running`, `done` or `error`. On failure:
 
@@ -208,18 +209,17 @@ audio.play();
 ## The languages
 
 43, chosen because they are the ones with speakers, not the ones with the
-best models. The model is given the page in whatever language it is already
-written in and asked to reduce it in the reader's own language, so there is no
-translation service in the path and no pivot language to lose anything through.
+best models. The page is translated into the reader's language and then spoken
+in full, so what comes back is the page rather than a summary of it.
 
 ```js
 const { languages } = await fetch(`${BASE}/languages`).then((r) => r.json());
 ```
 
 `code` is the AfriSpeech code you pass to `/speak`. `google` is the provider
-code carried over from when this list was built around Google Translate. It is
-still returned, and still accepted, so existing integrations keep working, but
-nothing is translated with it: it is now only a second label on the language.
+code the translation is asked for by, carried over from when this list was
+built around Google Translate. It is still returned, and still accepted, so
+existing integrations keep working.
 The service is the only authority on this list, so read it from `/languages`
 rather than hardcoding it; the 43 currently returned are:
 
@@ -231,22 +231,32 @@ Standard Moroccan Tamazight, Swahili (individual language), Swati, Tigrinya,
 Tiv, Tsonga, Tswana, Tumbuka, Venda, Wolof, Xhosa, Yoruba, Zulu.
 
 One thing worth knowing: **there is one voice, and it is not a native speaker
-of any of these 43 languages.** Gemini Live reads the summary in the target
-language with a voice chosen for clarity, which produces the right words with
-an accent a speaker of that language would not use. This is deliberate: there is
-no per-language voice to select from, so the claim cannot honestly be made that
-a given language has been heard pronounced correctly. Where that matters, the
+of any of these 43 languages.** Whichever engine is configured reads the page in
+the target language with a voice chosen for clarity, which produces the right
+words with an accent a speaker of that language would not use. There is no
+per-language voice to select from, so the claim cannot honestly be made that a
+given language has been heard pronounced correctly. Where that matters, the
 route to fix it is a voice per language, not a better prompt.
 
 ## Running it yourself
 
-This is the production path. The widget is the same either way; what changes is
-who owns the Gemini key.
+The widget is the same either way; what changes is who owns the keys.
 
 The service is a Node server in front of an Upstash Workflow, with Upstash Redis
-for run state and the audio cache. It needs **your own paid Gemini API key**, a
-Redis database and QStash credentials. Setup, the full list of configuration,
-and a verified end-to-end check are in [DEPLOY.md](DEPLOY.md).
+for run state and the audio cache. Two services do the work, and they are chosen
+as a pair in the configuration:
+
+|          | Translation                      | Speech        |
+| -------- | -------------------------------- | ------------- |
+| production | Google Cloud Translation API   | Gemini TTS    |
+| demo     | free translate endpoint          | Gemini Live   |
+
+The production pair is billed, quota you can see, and has no long-lived sockets
+in it. The demo pair needs no account, so it is the quickest way to see this
+work, and it is also the pair that was measured at 8 concurrent Live sessions
+served and 16 with 11 refused for quota — the reason the production pair is the
+default. Setup, the full list of configuration, and a verified end-to-end check
+are in [DEPLOY.md](DEPLOY.md).
 
 ### The key stays on your server
 
@@ -254,7 +264,9 @@ Get a key from [Google AI Studio](https://aistudio.google.com/apikey) and enable
 billing on the project. Then, roughly:
 
 ```bash
-wrangler secret put LISTEN_API_KEY     # your paid Gemini key
+wrangler secret put GEMINI_API_KEY              # the key the models are called with
+wrangler secret put GOOGLE_TRANSLATE_API_KEY    # when LISTEN_TRANSLATE_ENGINE=cloud
+wrangler secret put LISTEN_API_KEY              # the shared client key the widget sends
 wrangler secret put QSTASH_TOKEN
 wrangler secret put UPSTASH_REDIS_REST_TOKEN
 npm run deploy
@@ -281,6 +293,4 @@ is enough. Keep the key in that function's environment, never in the page.
 
 ## Licence
 
-MIT. See [LICENSE](LICENSE). That covers this code and the widget; it does not
-grant anything against the hosted service, which stays subject to the rate
-limits described in `DEPLOY.md`.
+MIT. See [LICENSE](LICENSE).

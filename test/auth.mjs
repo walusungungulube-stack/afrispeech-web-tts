@@ -42,7 +42,7 @@ const t = (name, fn) => {
 {
   const c = runCase('origins');
   t('allowed origin passes', () => assert.equal(c.goodOrigin, true));
-  t('allowed origin is echoed back', () => assert.equal(c.echoGood, 'https://afrispeech.com'));
+  t('allowed origin is echoed back', () => assert.equal(c.echoGood, 'https://example.com'));
   t('other origin -> 403', () => assert.equal(c.evilOrigin, 403));
   t('other origin gets no CORS header', () => assert.equal(c.echoEvil, null));
   t('originless server call still allowed', () => assert.equal(c.noOrigin, true));

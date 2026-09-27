@@ -1,35 +1,39 @@
-# Deploying afrispeech-listen
+# Deploying the service
 
 How to run the synthesis service, what it needs in its environment, and how to
 point the website widget at it. The service itself is described in
 [README.md](README.md); this file is only about getting it running somewhere.
 
-## Whose Gemini key is it
+## Whose keys are they
 
-**This is a `LISTEN_API_KEY` you supply, on your own billing.** The key is the
-only real cost in this service, and it is the one thing you cannot share.
+**The keys are ones you supply, on your own billing.** They are the only real
+cost in this service, and they are the one thing you cannot share. Whoever
+deployed an instance pays for it, and `GET /languages` returns a `notice` saying
+so.
 
-The shared deployment at `listen.example.org` uses
-this project's key and returns a `notice` on `GET /languages` saying so. It is
-there for integrating and demonstrating the widget. It is a public HTTP
-endpoint in front of a metered API, and there is no way to bill the person
-pressing the button, so it is not a production dependency for anyone.
+There are two keys, one per service this deployment calls:
 
-If you are deploying for real, the difference is entirely in these:
+- `GEMINI_API_KEY` is what the speech engines are called with, on your billing.
+- `GOOGLE_TRANSLATE_API_KEY` is what the Cloud Translation engine is called
+  with, and is only needed when `LISTEN_TRANSLATE_ENGINE=cloud`.
 
-- `LISTEN_API_KEY` is a key you created, with billing enabled, and you accept
-  the cost per turn.
-- It is a Worker secret, never a variable in `wrangler.jsonc` and never anything
-  in browser code. Anything shipped to the browser is readable by every visitor.
+For a real deployment, the difference from a demo is entirely in these:
+
+- The keys are created by you, with billing enabled, and you accept the cost.
+- They are Worker secrets, never variables in `wrangler.jsonc` and never
+  anything in browser code. Anything shipped to the browser is readable by every
+  visitor, and they will spend your quota.
 - `LISTEN_RATE_*` and `LISTEN_BUDGET_PER_DAY` are set to limits you chose. The
-  defaults protect someone else's key; yours needs its own.
+  defaults bound the damage; they are not access control.
 - Turn on a budget alert in AI Studio. This service is reachable by the public
   and you are billed by output audio, so the alert is how you find out before
   the invoice does.
 
-Set `LISTEN_MAX_LIVE_SESSIONS` with the same thought. The default of 300 is a
-queue length, not a figure anyone has measured: what your key sustains is a
-property of the key. See "What `LISTEN_MAX_LIVE_SESSIONS` counts" below.
+Set `LISTEN_MAX_LIVE_SESSIONS` with the same thought. The default of 16 is near
+what one Gemini Live key was measured to sustain, not a round number: 8
+concurrent sessions were all served, 16 had 11 refused for quota. What your key
+sustains is a property of the key. See
+"What `LISTEN_MAX_LIVE_SESSIONS` counts" below.
 
 ## What gets deployed
 
@@ -73,8 +77,9 @@ shows up as a `503` rather than as a bill.
 | Variable | Secret | What it is |
 | --- | --- | --- |
 | `GEMINI_API_KEY` | yes | Gemini access, with the TTS models enabled. |
+| `GOOGLE_TRANSLATE_API_KEY` | yes | Cloud Translation access. Only needed when `LISTEN_TRANSLATE_ENGINE=cloud`. |
 | `LISTEN_API_KEY` | yes | The key the widget sends as `x-listen-key`. Without it every request is refused with a 503. |
-| `LISTEN_ALLOWED_ORIGINS` | no | Comma separated origins allowed to call the service, for example `https://afrispeech.com,https://www.afrispeech.com`. |
+| `LISTEN_ALLOWED_ORIGINS` | no | Comma separated origins allowed to call the service, for example `https://example.com,https://www.example.com`. |
 | `UPSTASH_REDIS_REST_URL` | yes | Redis REST endpoint. Run state and the audio cache live here. |
 | `UPSTASH_REDIS_REST_TOKEN` | yes | Redis REST token. |
 | `UPSTASH_WORKFLOW_URL` | no | The **public** URL QStash calls back on. Required on a Box or container, unnecessary on Workers, where the request URL is already public. See the note at the end. Nothing in this repo reads it; the `@upstash/workflow` SDK does, as its callback base URL. Without it the SDK derives one from the incoming request, which on a container or a box is a private address and QStash refuses to deliver. See the note at the end. |
@@ -83,6 +88,8 @@ shows up as a `503` rather than as a bill.
 | `QSTASH_TOKEN` | yes | Used to publish runs. |
 | `QSTASH_CURRENT_SIGNING_KEY` | yes | Verifies the callbacks QStash makes into the service. |
 | `QSTASH_NEXT_SIGNING_KEY` | yes | The key QStash will roll to next. |
+| `LISTEN_TRANSLATE_ENGINE` | no | `cloud` or `unofficial`. `cloud` is Google Cloud Translation, source to target, and needs `GOOGLE_TRANSLATE_API_KEY`. `unofficial` is the free endpoint, which routes through Thai and needs no account. Default `cloud`. |
+| `LISTEN_SPEECH_ENGINE` | no | `gemini-tts` or `live`. `gemini-tts` is billed, quota you can see, no long-lived sockets. `live` is the demo engine, measured at 8 sessions served and 16 with 11 refused. Default `gemini-tts`. |
 | `PORT` | no | Defaults to `8787`. |
 | `HOST` | no | Defaults to `0.0.0.0`, which is what a container needs. |
 
@@ -100,16 +107,20 @@ than rejected, so a typo quietly becomes the default.
 
 | Variable | Default | Range | What it does |
 | --- | --- | --- | --- |
-| `LISTEN_MAX_CHARS` | `3000` | 200 to 3000 | Ceiling on how much of a page is sent to the model. The cap cannot be raised above 3000. |
-| `LISTEN_SUMMARY_MAX_CHARS` | `500` | 100 to 500 | Ceiling on how much is spoken, counted in characters of the reader's language. The model is told this number and asked to fit the summary inside it; it is not trimmed afterwards, because only audio comes back. Cannot be raised above 500. |
+| `LISTEN_MAX_CHARS` | `1000` | 200 to 1000 | Ceiling on how much of a page is read. The whole cap is translated and spoken, so a larger figure is a longer recording and a larger bill rather than a better one. |
+| `LISTEN_TTS_CHUNK_CHARS` | `200` | 80 to 400 | The translated text is spoken in pieces of about this size and the audio is joined. Gemini will not hold a turn open long enough for a whole article. |
+| `LISTEN_TTS_CONCURRENCY` | `4` | 1 to 8 | How many pieces of one article may be spoken at once. This is also how many sessions one reader holds, so it counts against `LISTEN_MAX_LIVE_SESSIONS`. |
+| `LISTEN_TTS_MAX_BISECT` | `2` | 0 to 4 | How many times a failing piece is halved to recover it. A halved piece is a smaller ask, not a second summary. |
+| `LISTEN_TRANSLATE_ATTEMPTS` | `3` | 1 to 6 | How many times translation is asked again when the pivot out of Thai did not take. Only applies to the `unofficial` engine. |
 | `LISTEN_MP3_KBPS` | `24` | 8 to 128 | Bitrate of the joined audio. |
 | `LISTEN_MP3_SAMPLE_RATE` | `16000` | 8000 to 24000 | Sample rate of the joined audio. |
 | `LISTEN_CACHE_TTL_SECONDS` | `1209600` | | How long a finished recording is kept for reuse. 14 days. |
-| `LISTEN_TTS_MODEL` | `gemini-3.1-flash-live-preview` | | The Live model that speaks. |
-| `LISTEN_TTS_VOICE` | `Zephyr` | | The voice. |
+| `GEMINI_TTS_MODEL` | `gemini-2.5-flash-preview-tts` | | The model behind `LISTEN_SPEECH_ENGINE=gemini-tts`. |
+| `GEMINI_LIVE_MODEL` | `gemini-3.1-flash-live-preview` | | The model behind `LISTEN_SPEECH_ENGINE=live`. |
+| `GEMINI_TTS_VOICE` | `Zephyr` | | The voice. |
 | `LISTEN_TTS_TIMEOUT_MS` | `120000` | 10000 to 300000 | How long one turn may take. |
-| `LISTEN_TTS_MAX_ATTEMPTS` | `5` | 1 to 10 | Retries for a failing turn. |
-| `LISTEN_MAX_LIVE_SESSIONS` | `300` | 1 to 512 | Live sessions open across all readers. This is the real ceiling on how many readers can be served at the same instant; readers past it wait in a queue rather than being refused. |
+| `LISTEN_TTS_MAX_ATTEMPTS` | `5` | 1 to 10 | Retries for a failing piece. |
+| `LISTEN_MAX_LIVE_SESSIONS` | `16` | 1 to 64 | Sessions open across all readers. This is the real ceiling on how many readers can be served at the same instant; readers past it wait in a queue rather than being refused. Measured near what one Live key sustains. |
 | `LISTEN_MAX_SLOT_WAIT_MS` | `60000` | 1000 to 300000 | How long a reader waits for a session before being told the service is busy. |
 | `LISTEN_RATE_ENABLED` | on | set `0` to switch off | Turns the per-address limits off. |
 | `LISTEN_RATE_PER_MINUTE` | `5` | 0 to 600 | Per address, per minute. 0 switches that limit off. |
@@ -444,8 +455,8 @@ of them make the endpoint private. Set any to 0 to switch it off.
 | `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY`, `QSTASH_NEXT_SIGNING_KEY` | Runs the workflow, and verifies the callback. |
 | `LISTEN_API_KEY` | The browser key, if you use one. |
 | `LISTEN_ALLOWED_ORIGINS` | Origins allowed to call this. |
-| `LISTEN_MAX_CHARS` | Ceiling on how much of a page is sent to the model. |
-| `LISTEN_SUMMARY_MAX_CHARS` | Ceiling on how much is spoken. Part of the cache key. |
+| `LISTEN_MAX_CHARS` | Ceiling on how much of a page is read. |
+| `LISTEN_TTS_CHUNK_CHARS`, `LISTEN_TTS_CONCURRENCY` | How the page is spoken in pieces. Part of the cache key. |
 
 Full list with defaults in [`.env.example`](.env.example).
 
@@ -458,26 +469,31 @@ Workflow and immediately returns a run id, so nothing times out behind a long
 article. The client polls `/status` and collects the audio when it is ready.
 
 Inside the run: the text that was sent is clipped to `LISTEN_MAX_CHARS`, then
-handed to **one** Gemini Live turn, in the language it was already written in.
-The model is told the reader's target language and the `LISTEN_SUMMARY_MAX_CHARS`
-budget, and asked to reduce the page to a summary within that budget and speak
-only that. The result is one PCM stream, encoded to a single MP3. There is no
-translation service in the path and no second call to coordinate.
+translated into the reader's language and spoken in full, in pieces of about
+`LISTEN_TTS_CHUNK_CHARS`, with `LISTEN_TTS_CONCURRENCY` pieces at a time, and
+the audio joined into one MP3. Translation and speech are separate steps, so a
+failing piece is retried or halved without repeating the translation, and the
+page arrives as the page rather than as a model's reduction of it.
 
-A failing turn is retried up to `LISTEN_TTS_MAX_ATTEMPTS` times. It is not
-halved on failure: two halves would be two summaries and so twice the character
-budget, and the page no longer arrives as one piece of text to be summarised.
+A failing piece is retried up to `LISTEN_TTS_MAX_ATTEMPTS` times, then halved up
+to `LISTEN_TTS_MAX_BISECT` times: a halved piece is a smaller ask, and a small
+ask is far likelier to finish than a retry of the same one.
 
-The 500-character budget is an instruction to the model, not a trim afterwards.
-Only audio comes back, so there is nothing to measure the result against and
-nothing to cut. The page itself *is* capped, and that cap is enforced. If the
-budget has to be a guarantee rather than a request, that needs a transcript to
-check the length against, which is a different design.
+Translation asked for through the free endpoint routes via Thai, and a result
+that is still Thai is asked again up to `LISTEN_TRANSLATE_ATTEMPTS` times before
+being refused, because a recording that is silently in the wrong language is the
+one failure nothing else in the pipeline would notice. The Cloud engine
+translates source to target and has no pivot to fail through.
+
+A page already in the language asked for — usually English — is read as it
+stands. Translating it would spend a request to arrive back where it started.
 
 Finished audio is cached in Redis for 14 days, keyed by the text, the language,
-the summary budget, the voice and the model, so the same article read twice is
-paid for once, and a changed budget is a different recording rather than a stale
-hit. An entry that is not valid audio is discarded rather than served.
+the two engines, the model, the voice and the audio settings, so the same
+article read twice is paid for once, a recording made by one pair of engines is
+never served for the other, and a changed setting is a different recording
+rather than a stale hit. An entry that is not valid audio is discarded rather
+than served.
 
 A run that fails records the reason in Redis and answers `state: "error"` with
 something a reader can act on, because the SDK does not deliver a failure
@@ -497,8 +513,10 @@ npm run test:e2e          # real Gemini, real Redis, decodes the MP3 to check it
 | | |
 | --- | --- |
 | `src/index.mjs` | Routes, the workflow, the usage notice, error handling. |
-| `src/lib/live-tts.mjs` | The one Gemini Live turn: prompt, voice, PCM out. |
-| `src/lib/pipeline.mjs` | Read, cap, resolve language, speak, encode, cache. |
+| `src/lib/live-tts.mjs` | The Gemini Live engine: prompt, voice, PCM out. |
+| `src/lib/gemini.mjs` | The Gemini TTS engine, and the shared quota classifier. |
+| `src/lib/translate.mjs` | The two translation engines: Cloud direct, free via Thai. |
+| `src/lib/pipeline.mjs` | Read, cap, resolve language, translate, speak in pieces, join, cache. |
 | `src/lib/store.mjs` | Redis state, audio, and the caches. |
 | `test/` | One file per area, each runnable on its own. |
 

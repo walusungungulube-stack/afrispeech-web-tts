@@ -50,7 +50,7 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`afrispeech-listen listening on http://${HOST}:${PORT}`);
+  console.log(`listen listening on http://${HOST}:${PORT}`);
 });
 
 process.on('unhandledRejection', (error) => {
