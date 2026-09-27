@@ -11,11 +11,19 @@ aloud. No build step, no framework, no SDK to install.
 Put this in the `<head>` of any page with article text on it:
 
 ```html
-<script src="https://afrispeech.org/afrispeech-listen.js" defer></script>
+<script
+  src="https://afrispeech.org/afrispeech-listen.js"
+  data-endpoint="https://listen.afrispeech.org"
+  defer></script>
 ```
 
 That is the whole integration. A button appears in the corner, and pressing it
 reads the page.
+
+`data-endpoint` is where the audio comes from. There is no default: a script tag
+without one gets a widget that cannot reach a service, which is a confusing
+thing to hand someone, so it says so on the language list instead of failing
+quietly.
 
 The page is read **in the reader's browser**, not fetched by our server, so it
 works on pages that block automated requests and on anything rendered by
@@ -40,14 +48,15 @@ All optional, set on the script tag:
 | `data-lang`     | reader's  | Start in this language instead of asking. An AfriSpeech code, e.g. `swh`. |
 | `data-position` | `bottom-right` | `bottom-right` or `bottom-left`.                       |
 | `data-label`    | `Listen`  | The button text.                                           |
-| `data-endpoint` | the hosted service | Point it at your own deployment instead.         |
+| `data-endpoint` | none, required | The synthesis service to call. There is no default. |
 | `data-key`      | none      | A browser key, if you run your own deployment.             |
 
 ### Before you go live
 
-If you are pointing the widget at your own deployment, add your site's origin to
-its `LISTEN_ALLOWED_ORIGINS`. Requests from anywhere else are refused. There is
-more on that under [Running your own](#running-your-own).
+If you are pointing the widget at your own deployment rather than ours, add your
+site's origin to its `LISTEN_ALLOWED_ORIGINS`. Requests from anywhere else are
+refused. That and the rest of running the service yourself is in
+[DEPLOY.md](DEPLOY.md).
 
 ## Build your own player
 
@@ -172,7 +181,16 @@ const { languages } = await fetch(`${BASE}/languages`).then((r) => r.json());
 ```
 
 `code` is the AfriSpeech code you pass to `/speak`. `google` is the underlying
-Google Translate code, and is there so you can see what is underneath.
+Google Translate code, and is there so you can see what is underneath. The
+service is the only authority on this list, so read it from `/languages` rather
+than hardcoding it; the 43 currently returned are:
+
+Afrikaans, Akan, Amharic, Baoulé, Bemba (Zambia), Chichewa, Dinka, Dombe,
+Dyula, Ewe, Fon, Fulah, Igbo, Kinyarwanda, Kongo, Krio, Lingala,
+Luo (Kenya and Tanzania), Malagasy, Ndau, Nuer, Oromo, Pedi, Rundi, Sango,
+Seselwa Creole French, Shona, Somali, South Ndebele, Southern Sotho,
+Standard Moroccan Tamazight, Swahili (individual language), Swati, Tigrinya,
+Tiv, Tsonga, Tswana, Tumbuka, Venda, Wolof, Xhosa, Yoruba, Zulu.
 
 One thing worth knowing: **the voice is English.** The text is translated into
 the target language, then spoken by an English voice reading it. It is clear and
@@ -180,92 +198,15 @@ correct, and it is not a native speaker of that language. This is deliberate:
 native voices for 43 languages are not available in one service, and a
 mispronounced word is worse than a foreign accent.
 
-## Running your own
+## Running it yourself
 
-The service is a Cloudflare Worker plus an Upstash Workflow. It needs a Gemini
-API key, an Upstash Redis, and a QStash token.
+The service is a Node server in front of an Upstash Workflow, with Upstash Redis
+for run state and the audio cache. It needs a Gemini API key, a Redis database
+and QStash credentials. Setup, the full list of configuration, and a verified
+end-to-end check are in [DEPLOY.md](DEPLOY.md).
 
-```bash
-git clone https://github.com/walusungungulube-stack/afrispeech-web-tts
-cd afrispeech-web-tts
-cp .env.example .env    # then fill it in
-npm install
-npm test
-npm start               # wrangler dev
-```
+## Licence
 
-Set `LISTEN_ALLOWED_ORIGINS` to the origins allowed to call it, comma separated.
-
-**Know what this does and does not do.** Neither the key nor the allowlist is
-access control:
-
-- The key is in your page source. Every visitor can read it. It is a label
-  saying "this is widget traffic", nothing more.
-- An `Origin` header is set by the browser and only the browser. `curl` sends
-  none, so the allowlist is skipped, and anyone who wants to send one can.
-
-The allowlist is worth having, because it stops other people's *pages* from
-spending your quota out of a reader's browser. But what actually caps what a
-caller can cost you is the rate limits:
-
-| Setting | Default | What it caps |
-| --- | --- | --- |
-| `LISTEN_RATE_PER_MINUTE` | 5 | Starts per address, per minute. |
-| `LISTEN_RATE_PER_DAY` | 100 | Starts per address, per day. |
-| `LISTEN_BUDGET_PER_DAY` | 5000 | Starts across everyone, per day. |
-
-Only starts are counted, so polling and collecting audio are never throttled.
-The per-address limits are all bypassed by rotating address, which is why the
-shared daily budget is the one that matters. All of them bound the damage; none
-of them make the endpoint private. Set any to 0 to switch it off.
-
-| Variable | What it is |
-| --- | --- |
-| `GEMINI_API_KEY` | Gemini access, with the TTS models enabled. |
-| `UPSTASH_REDIS_REST_URL` / `_TOKEN` | Run state and the audio cache. |
-| `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY` / `_NEXT_` | Runs the workflow off a request. |
-| `LISTEN_API_KEY` | The browser key, if you use one. |
-| `LISTEN_ALLOWED_ORIGINS` | Origins allowed to call this. |
-| `LISTEN_MAX_CHARS` | Ceiling on how much of a page is read. |
-
-Full list with defaults in [`.env.example`](.env.example).
-
-## How it works
-
-Short version, because it mostly does not concern you unless you are debugging.
-
-A request does not wait for audio. `POST /speak` hands the job to an Upstash
-Workflow and immediately returns a run id, so nothing times out behind a long
-article. The client polls `/status` and collects the audio when it is ready.
-
-Inside the run: the text that was sent is clipped to a length cap, translated
-through Thai, and spoken by Gemini Live in pieces that are joined into one MP3. Each piece is retried on failure and halved if it keeps
-failing, because a piece that is too long for the model to hold open is the
-common case rather than the exceptional one.
-
-Finished audio is cached in Redis for 14 days, keyed by the text, the language,
-the voice and the model, so the same article read twice is paid for once. An
-entry that is not valid audio is discarded rather than served.
-
-Two details that matter if you are reading a log. A run that fails records the
-reason in Redis and answers `state: "error"` with something a reader can act on,
-because the SDK does not deliver a failure callback for a first invocation. And
-a translation still in Thai is asked for again rather than recorded, since Google
-reports a language it will not produce by handing back the Thai it was given,
-with nothing in the response to say so.
-
-## Development
-
-```bash
-npm test           # 100 checks, no network or keys needed
-npm run test:e2e   # real Gemini, real Redis, decodes the MP3 to check it is speech
-```
-
-| | |
-| --- | --- |
-| `src/index.mjs` | Routes, the workflow, error handling. |
-| `src/lib/translate.mjs` | Translation through the Thai pivot. |
-| `src/lib/pivot.mjs` | Checks the pivot out of Thai actually happened. |
-| `src/lib/live-tts.mjs` | Gemini Live session, PCM out. |
-| `src/lib/store.mjs` | Redis state, audio, and the caches. |
-| `test/` | One file per area, each runnable on its own. |
+MIT. See [LICENSE](LICENSE). That covers this code and the widget; it does not
+grant anything against the hosted service, which stays subject to the rate
+limits described in `DEPLOY.md`.

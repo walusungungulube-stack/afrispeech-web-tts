@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Synthesis server for AfriSpeech Listen: article text in, spoken MP3 out.",
+  "license": "MIT",
   "main": "src/index.mjs",
   "scripts": {
     "start": "node --env-file-if-exists=.env server.mjs",
