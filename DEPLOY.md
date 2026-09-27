@@ -176,13 +176,50 @@ plainly rather than discovering later:
 
 - the two per-address limits are bypassed by rotating address, which the budget
   was not;
-- so there is now no ceiling on total daily spend. What remains is 16 concurrent
-  runs, from `pipeline.mjs`, which bounds how fast the quota can be drained but
-  not how much of it can be spent over a day.
+- so there is now no ceiling on total daily spend. What remains is
+  `LISTEN_MAX_LIVE_SESSIONS`, 16, which bounds how fast the quota can be drained
+  but not how much of it can be spent over a day. It is worth being precise
+  about what that counts, because it is not what the name suggests: a *slot* is
+  one utterance being spoken, not one reader. See the note below.
 
 A deployment that is not public should set it, and a public one should decide
 knowing that the daily ceiling is the only limit that cannot be rotated past.
 The code is unchanged and the switch is still there; only the value is 0.
+
+### What `LISTEN_MAX_LIVE_SESSIONS` counts
+
+A slot is **one utterance being spoken**, not one reader. `withSlot` wraps a
+single `liveTts()` call, and an article arrives split into pieces of about
+`LISTEN_MAX_CHARS` characters, so one reader can be holding several slots at
+once, up to `LISTEN_TTS_CONCURRENCY` of them.
+
+So the number of readers being served simultaneously is not a fixed number. It
+is between `maxLiveSessions / ttsConcurrency` and `maxLiveSessions`:
+
+| Article | Pieces at once | Concurrent readers at 16 slots |
+| --- | --- | --- |
+| Short, under `LISTEN_MAX_CHARS` | 1 | 16 |
+| Long, split | 4 (`LISTEN_TTS_CONCURRENCY`) | 4 |
+
+Two other things are true of it and are easy to miss:
+
+- **The counter is in Redis, not in memory.** `listen:sem:live` is a Lua
+  compare-and-increment with a 120-second lease. It has to be: Workers run many
+  isolates at once, so an in-process counter would count each isolate's own
+  sessions separately and cap nothing globally. A lease rather than a plain
+  counter is what stops a step the platform cuts short from leaking a slot, and
+  the release runs in a `finally` for the same reason.
+- **Waiting is the design, not refusal.** A reader who has been told their
+  article is being read is not told no; the request queues for up to
+  `LISTEN_MAX_SLOT_WAIT_MS` (60s) and only then gets a 503.
+
+**Nothing about this number comes from memory.** There is no memory or heap
+calculation anywhere in `semaphore.mjs` or the config, and 16 is a value someone
+chose. What it should be sized against is how many Live TTS sessions Gemini will
+hold open at once for one API key, since each slot is a WebSocket held open for
+the length of an utterance. Raise it past what the upstream allows and runs
+start failing at the point of synthesis, which is a worse failure than waiting
+because the reader has already been told it is working.
 
 An allowlist you control is also how you find out who is using the service, and
 `*` gives that up. If per-site attribution is ever wanted, the way back is a key
