@@ -39,7 +39,7 @@ function isAudio(bytes) {
 }
 
 export function isValidRunId(value) {
-  return typeof value === 'string' && /^[wfr]_[A-Za-z0-9_-]{6,}$/.test(value);
+  return typeof value === 'string' && /^wfr_[A-Za-z0-9_-]{6,}$/.test(value);
 }
 
 export async function markRunning(runId, meta = {}) { metaStore.set(runId, { state: 'running', ...meta, expires: Date.now() + META_TTL_MS }); }
