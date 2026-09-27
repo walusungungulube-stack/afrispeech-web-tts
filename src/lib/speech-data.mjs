@@ -1,5 +1,5 @@
 /**
- * The languages this server can speak, with the Google Translate code for each.
+ * The languages this server can speak, with a provider code for each.
  *
  * This is a generated snapshot of the names and country lists from afriso, kept
  * in the repository so this service has no dependency on the website. Regenerate

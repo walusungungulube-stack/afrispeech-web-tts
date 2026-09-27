@@ -1,6 +1,8 @@
 /**
- * The brief is the first 1000 characters, allowed to be shorter so the clip
- * does not end mid-sentence. Run with: node test/truncate.mjs
+ * The page is cut to a limit before the model sees it, allowed to be shorter so
+ * the text does not end mid-sentence. The limit here is an arbitrary one: the
+ * figure the service actually uses is config.maxChars. Run with:
+ * node test/truncate.mjs
  */
 import assert from 'node:assert/strict';
 import { truncateToLimit } from '../src/lib/truncate.mjs';
@@ -56,13 +58,12 @@ console.log(`\n  ${passed} truncation checks passed`);
 
 /* A reader who types a sentence and is told the webpage is not supported has
    been told a true thing about the wrong subject. */
-t('a single typed sentence is something to read out', async () => {
-  const short = await readSource({ text: 'Habari yako. Karibu Nairobi.', lang: 'swh' });
+t('a single typed sentence is something to read out', () => {
+  const short = readSource({ text: 'Habari yako. Karibu Nairobi.' });
   assert.equal(short.text, 'Habari yako. Karibu Nairobi.');
-  assert.equal(short.via, 'client', 'it came from the reader, not from a page');
 });
 
-t('whitespace is not something to read out', async () => {
-  await assert.rejects(() => readSource({ text: '   \n  ', lang: 'swh' }), /neither text nor an address/);
+t('whitespace is not something to read out', () => {
+  assert.throws(() => readSource({ text: '   \n  ' }), /carried no text/);
 });
 

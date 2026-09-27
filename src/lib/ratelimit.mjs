@@ -17,9 +17,12 @@
  *   - across everyone, per day, which is the one that matters. Per-address
  *     limits are all bypassed by rotating addresses, and a budget is not.
  *
- * Only starts are counted. Status polling and fetching finished audio are free
- * and must not be limited, or a legitimate client would be throttled for
- * waiting.
+ * Only starts are charged to the allowances. Status polling and fetching
+ * finished audio are free and must not be limited, or a legitimate client
+ * would be throttled for waiting, and a request that never becomes a run is
+ * refused before it is charged, so the day's money cannot be spent on bodies
+ * that were never going to be read. What a malformed request does still cost
+ * is a socket, so those are counted separately by the flood guard.
  */
 
 import { redis } from './store.mjs';
@@ -77,34 +80,58 @@ export function setCounter(fn) {
 }
 
 /**
- * Decide whether a run may start.
+ * The flood guard: one request per address per minute.
+ *
+ * This runs before the body is even looked at, because its job is to stop a
+ * caller hammering the endpoint, and a request that turns out to be malformed
+ * still cost us a socket and a Redis round trip. It counts requests, not runs.
  *
  * @param {Request} request
  * @returns {Promise<{ok: boolean, status?: number, error?: string,
  *   retryAfter?: number, scope?: string}>}
  */
-export async function checkStart(request) {
+export async function checkFlood(request) {
+  if (!config.rateEnabled) return { ok: true };
+
+  const id = callerId(request);
+  if (!id) return { ok: true };
+
+  const perMinute = config.ratePerMinute;
+  if (perMinute > 0) {
+    const count = await counter(`listen:rl:min:${id}`, MINUTE);
+    if (count > perMinute) {
+      return {
+        ok: false,
+        status: 429,
+        scope: 'minute',
+        retryAfter: MINUTE,
+        error: `Too many requests. You can start ${perMinute} a minute; try again shortly.`,
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
+/**
+ * What a run costs: the caller's daily allowance and the service's budget.
+ *
+ * This runs only once the request is known to be a real one that is about to
+ * start a run, so a caller cannot spend the day's Gemini money by posting
+ * bodies that were never going to be read. The global budget is the one limit
+ * that cannot be got around by changing address, which is exactly why it has
+ * to be spent only on genuine starts.
+ *
+ * @param {Request} request
+ * @returns {Promise<{ok: boolean, status?: number, error?: string,
+ *   retryAfter?: number, scope?: string}>}
+ */
+export async function claimBudget(request) {
   if (!config.rateEnabled) return { ok: true };
 
   const id = callerId(request);
 
-  // Per address first, so a flood is stopped before it reaches the shared
-  // counter and eats the day's budget for everyone else.
   if (id) {
-    const perMinute = config.ratePerMinute;
-    if (perMinute > 0) {
-      const count = await counter(`listen:rl:min:${id}`, MINUTE);
-      if (count > perMinute) {
-        return {
-          ok: false,
-          status: 429,
-          scope: 'minute',
-          retryAfter: MINUTE,
-          error: `Too many requests. You can start ${perMinute} a minute; try again shortly.`,
-        };
-      }
-    }
-
     const perDay = config.ratePerDay;
     if (perDay > 0) {
       const count = await counter(`listen:rl:day:${id}`, DAY);
@@ -120,8 +147,7 @@ export async function checkStart(request) {
     }
   }
 
-  // The ceiling on the whole service's spend for the day. This is the limit
-  // that cannot be got around by changing address.
+  // The ceiling on the whole service's spend for the day.
   const budget = config.budgetPerDay;
   if (budget > 0) {
     const count = await counter('listen:rl:budget:day', DAY);

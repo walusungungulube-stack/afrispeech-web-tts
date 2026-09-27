@@ -1,14 +1,23 @@
 /**
  * Retrying a step that talks to a model.
  *
- * A dropped socket or a throttled response is worth repeating; a piece that is
- * simply too long for the model to finish in one turn is not, and will fail the
- * same way five times. So a later attempt is allowed to change the work rather
- * than just repeat it.
+ * A dropped socket or a throttled response is worth repeating, and usually
+ * succeeds the second time. The delay grows between attempts, because retrying
+ * instantly would pile the same load back onto a service that has just refused
+ * it, while other readers are waiting on it too.
  *
- * The delay grows between attempts. Several pieces are in flight at once, so
- * retrying instantly would pile the same load back onto a service that has just
- * refused it.
+ * A caller that can recover by doing something *different* rather than
+ * repeating may say so with `onFailure`. The synthesis pipeline does not: the
+ * model reduces the page before speaking, so a turn is already short, and the
+ * only alternative to one turn would be two turns and twice the character
+ * budget.
+ *
+ * `shouldRetry` exists for the error that repeating cannot fix. A refused quota
+ * is the clear case: the same request sent again cannot succeed, and every
+ * repeat spends another attempt against a limit that is already spent while
+ * other readers wait behind it. Measured on one key, sixteen concurrent turns
+ * was enough to have eleven refused for quota, so retrying each of those would
+ * have made the shortfall considerably worse rather than papered over it.
  */
 
 const DEFAULT_BASE_MS = 400;
@@ -23,16 +32,19 @@ export function backoff(attempt, baseMs = DEFAULT_BASE_MS, capMs = 8000) {
 /**
  * Run `attempt`, and if it throws, try again up to `attempts` times in total.
  *
- * `onFailure(attempt, error)` runs before each wait. Return nothing to simply
- * repeat the same work, a function to run it as the next attempt instead, or a
- * value to use as the result. Recovering from a long piece means speaking it as
- * two shorter ones, and the result of that is the answer rather than another
- * attempt.
+ * `onFailure(attempt, error)` runs before each wait, for callers that can
+ * recover by changing the work. Return nothing to simply repeat the same work, a
+ * function to run as the next attempt, or a value to use as the result.
+ *
+ * `shouldRetry(error, attempt)` returning false rethrows without waiting. It
+ * defaults to retrying everything, which is right for the dropped sockets and
+ * throttled responses this is built for.
  */
 export async function withRetry(attempt_, {
   attempts = 5,
   baseMs = DEFAULT_BASE_MS,
   onFailure = null,
+  shouldRetry = null,
   sleep = wait,
 } = {}) {
   let lastError;
@@ -40,6 +52,9 @@ export async function withRetry(attempt_, {
     try {
       return await attempt_(attempt);
     } catch (error) {
+      // Asked for last, because an error that repeating cannot fix should be
+      // handed straight back rather than spending the remaining attempts on it.
+      if (shouldRetry && !shouldRetry(error, attempt)) throw error;
       lastError = error;
       if (attempt === attempts) break;
       if (onFailure) {
@@ -60,8 +75,10 @@ export async function withRetry(attempt_, {
 /**
  * Split text near the middle, on a word boundary.
  *
- * Used as the recovery for a piece the model will not finish: two shorter
- * pieces are more likely to succeed than the same long one asked again.
+ * Used as the recovery for a piece the model will not finish: two shorter pieces
+ * are more likely to succeed than the same long one asked again. Splitting is
+ * only ever a recovery from a failure, never the normal path, because the pieces
+ * are joined back into one recording and a split costs an extra session.
  */
 export function bisect(text) {
   const clean = String(text).trim();

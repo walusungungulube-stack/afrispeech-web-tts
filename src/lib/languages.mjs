@@ -1,10 +1,12 @@
 /**
  * The languages the Listen feature can actually speak.
  *
- * Two code systems have to agree before a language can be offered: afriso uses
- * ISO 639-3, while Google Translate uses its own short codes. A language is
- * listed here only when both exist, so the dropdown can never offer a language
- * the translation step would reject.
+ * A language is offered only when there is a code for it on both sides: the
+ * ISO 639-3 code afriso uses, and a second code that the generated table carries
+ * for the underlying provider. The second is now only a label rather than
+ * something in the request path, since there is no separate translation call, but
+ * the entry is what says a language is known to work rather than merely written
+ * down.
  *
  * The name and country list for each code come from the generated table in
  * speech-data.mjs, which this repository owns.
@@ -14,14 +16,14 @@ import { LANGUAGE_DATA } from './speech-data.mjs';
 
 
 /**
- * A language is offered when Google Translate can translate it. There is no
- * per-language voice to confirm: the text is pivoted through Thai and read by
- * the one English voice, so the abstraction is the translation rather than a
- * native pronunciation. Probing for a voice per language would gate languages
- * that work perfectly well already.
+ * There is no per-language voice to confirm, and no probe that would tell us
+ * anything true: one voice reads whatever language it is given, so testing it
+ * would find a model producing words, not a language working. `tts` is
+ * therefore a claim this file makes rather than one it has verified, and the
+ * honest way to narrow it is to listen.
  *
- * LISTEN_HELD_BACK_LANGUAGES exists for a language that turns out to be
- * unusable anyway, so it can be pulled out without a code change.
+ * LISTEN_HELD_BACK_LANGUAGES exists so a language that turns out to be unusable
+ * can be pulled out without a code change.
  */
 const HELD_BACK = new Set(
   String(process.env.LISTEN_HELD_BACK_LANGUAGES || '')
@@ -39,7 +41,6 @@ export const SPEECH_LANGUAGES = Object.entries(LANGUAGE_DATA)
     name: entry.name,
     countries: entry.countries,
     google: entry.google,
-    // Every language with a Google code is translatable, and therefore speakable.
     tts: Boolean(entry.google) && !HELD_BACK.has(entry.google.toLowerCase()),
   }))
   .sort((a, b) => a.name.localeCompare(b.name, 'en'))
@@ -47,13 +48,13 @@ export const SPEECH_LANGUAGES = Object.entries(LANGUAGE_DATA)
   .filter((lang, i, all) => all.findIndex((l) => l.google === lang.google) === i);
 
 for (const lang of SPEECH_LANGUAGES) {
-  // Lookups are lowercased, so index that way. Ndau's Google code carries a
+  // Lookups are lowercased, so index that way. Ndau's provider code carries a
   // region tag ("ndc-ZW") and would otherwise be unreachable by its own code.
   if (!BY_GOOGLE.has(lang.google.toLowerCase())) BY_GOOGLE.set(lang.google.toLowerCase(), lang);
   if (!BY_AFRISO.has(lang.code)) BY_AFRISO.set(lang.code, lang);
 }
 
-/** Languages the widget may offer: the ones that can be translated. */
+/** Languages the widget may offer. */
 export const OFFERED_LANGUAGES = SPEECH_LANGUAGES.filter((l) => l.tts);
 
 /** Resolve an afriso code, a Google code, or an English name. */

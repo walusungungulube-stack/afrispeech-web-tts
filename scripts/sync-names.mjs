@@ -1,11 +1,10 @@
 /**
  * Refresh the names and country lists in speech-data.mjs from afriso.
  *
- * The Google Translate code for each language is the part worth reviewing, so
- * this script leaves it alone and only fills in the descriptive fields. It also
- * reports any language that afriso knows but this table has no Google code for,
- * because a language missing here cannot be offered even though we have data for
- * it.
+ * The provider code for each language is the part worth reviewing, so this
+ * script leaves it alone and only fills in the descriptive fields. It also
+ * reports any language that afriso knows but this table has no code for, because
+ * a language missing here cannot be offered even though we have data for it.
  *
  * Usage: node scripts/sync-names.mjs [path-to-afrispeech-website]
  */

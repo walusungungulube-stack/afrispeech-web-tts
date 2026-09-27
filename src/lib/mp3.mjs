@@ -22,7 +22,30 @@
  * floor. Note the bitrate alone sets the file size: 24 kbps is 24 kbps whether
  * the output is 8 or 16 kHz.
  */
-import { createMp3Encoder } from 'wasm-media-encoders';
+import { createEncoder, createMp3Encoder } from 'wasm-media-encoders';
+
+/* The encoder above is LAME in WebAssembly, and there are two ways to get hold of
+ * it. createMp3Encoder() compiles the copy this dependency carries as a base64
+ * data URI, which a JavaScript runtime is free to do. Workers are not: workerd
+ * refuses to generate code from a WebAssembly binary at runtime, and answers
+ * WebAssembly.instantiate with "Wasm code generation disallowed by embedder"
+ * for any input, down to an empty ten-byte module.
+ *
+ * A Worker can still have WebAssembly, just not compiled on the spot. A .wasm
+ * listed under wasm_modules is compiled ahead of time by Cloudflare and arrives
+ * as an already-built WebAssembly.Module, and the loader hands a non-string
+ * straight to WebAssembly.instantiate, which takes a Module as readily as bytes.
+ * So on Workers the encoder is built from that binding, and on Node, where there
+ * is no binding, the bundled copy is compiled as it always was.
+ *
+ * Set per request rather than per module load, because a step executes inside
+ * the fetch that woke it and an isolate is reused across runs. */
+let compiled = null;
+
+/** Hand the encoder a precompiled module, or null to use the bundled copy. */
+export function useEncoderModule(mod) {
+  compiled = mod ?? null;
+}
 
 /** LAME wants whole blocks of 1152 samples. */
 const BLOCK = 1152;
@@ -52,7 +75,9 @@ export async function pcmToMp3(pcm, { sampleRate, kbps, outRate }) {
   const samples = new Float32Array(count);
   for (let i = 0; i < count; i += 1) samples[i] = pcm.readInt16LE(i * 2) / 32768;
 
-  const encoder = await createMp3Encoder();
+  const encoder = compiled
+    ? await createEncoder('audio/mpeg', compiled)
+    : await createMp3Encoder();
   encoder.configure({ sampleRate, channels: 1, bitrate: kbps, outputSampleRate: outRate });
 
   const parts = [];

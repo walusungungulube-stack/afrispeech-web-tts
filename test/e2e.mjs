@@ -34,6 +34,51 @@ Consumer groups argued that the pass-through into shop prices was faster than
 the official inflation figures suggested, and asked the statistics office to
 publish its underlying data more promptly. The central bank said it would review
 its position at the next scheduled meeting and that no decision had been taken.
+The central bank raised its benchmark rate this week, citing persistent food
+inflation across the region. Retailers in the capital reported higher shelf
+prices within days of the announcement, and several importers asked for a delay
+in payment terms so they could absorb the increase without passing all of it on.
+Economists at three commercial banks said they expect borrowing costs to remain
+elevated through the middle of the year, though they disagreed about how far,
+and one desk forecast a further increase before the rains. The finance ministry
+promised targeted support for small traders and said the details would be
+published next month, after a review of the hardship fund that was set up during
+the previous drought. Traders in the eastern districts said they had already
+raised prices twice this year and expected a third increase before the harvest.
+Consumer groups argued that the pass-through into shop prices was faster than
+the official inflation figures suggested, and asked the statistics office to
+publish its underlying data more promptly. The central bank said it would review
+its position at the next scheduled meeting and that no decision had been taken.
+The central bank raised its benchmark rate this week, citing persistent food
+inflation across the region. Retailers in the capital reported higher shelf
+prices within days of the announcement, and several importers asked for a delay
+in payment terms so they could absorb the increase without passing all of it on.
+Economists at three commercial banks said they expect borrowing costs to remain
+elevated through the middle of the year, though they disagreed about how far,
+and one desk forecast a further increase before the rains. The finance ministry
+promised targeted support for small traders and said the details would be
+published next month, after a review of the hardship fund that was set up during
+the previous drought. Traders in the eastern districts said they had already
+raised prices twice this year and expected a third increase before the harvest.
+Consumer groups argued that the pass-through into shop prices was faster than
+the official inflation figures suggested, and asked the statistics office to
+publish its underlying data more promptly. The central bank said it would review
+its position at the next scheduled meeting and that no decision had been taken.
+The central bank raised its benchmark rate this week, citing persistent food
+inflation across the region. Retailers in the capital reported higher shelf
+prices within days of the announcement, and several importers asked for a delay
+in payment terms so they could absorb the increase without passing all of it on.
+Economists at three commercial banks said they expect borrowing costs to remain
+elevated through the middle of the year, though they disagreed about how far,
+and one desk forecast a further increase before the rains. The finance ministry
+promised targeted support for small traders and said the details would be
+published next month, after a review of the hardship fund that was set up during
+the previous drought. Traders in the eastern districts said they had already
+raised prices twice this year and expected a third increase before the harvest.
+Consumer groups argued that the pass-through into shop prices was faster than
+the official inflation figures suggested, and asked the statistics office to
+publish its underlying data more promptly. The central bank said it would review
+its position at the next scheduled meeting and that no decision had been taken.
 `.trim();
 
 let passed = 0;
@@ -44,25 +89,57 @@ const t = (name, fn) => {
 
 console.log(`  model ${config.ttsModel}, ${config.mp3Kbps} kbps at ${config.mp3SampleRate} Hz\n`);
 const started = Date.now();
-const result = await synthesise({ text: ARTICLE, lang: 'en', locale: 'en-GB', title: 'Rates' });
+const result = await synthesise({ text: ARTICLE, lang: 'en', locale: 'en-GB' });
 const { meta, spoken, clipped } = result;
 
-console.log(`  read ${meta.via}, ${meta.chars}/${meta.totalChars} chars, truncated=${meta.truncated}`);
-console.log(`  ${meta.language}: ${result.translated.text.slice(0, 90)}…`);
+console.log(`  ${meta.chars}/${meta.totalChars} chars, truncated=${meta.truncated}`);
 console.log(`  ${meta.seconds}s audio, ${(meta.bytes / 1024).toFixed(0)} KB, first byte ${meta.firstByteMs}ms, synth ${(meta.synthMs / 1000).toFixed(1)}s`);
 console.log(`  wall ${((Date.now() - started) / 1000).toFixed(1)}s\n`);
 
-t('the text is capped at 1000 characters', () => {
-  assert.ok(clipped.text.length <= 1000, `got ${clipped.text.length}`);
+/* Ask twice. The second call is a cache hit and costs nothing, and it is a
+   different code path: a hit rebuilds the result from what was stored rather
+   than from what was just made, so a field left out of the stored copy is a field
+   the caller does not get. Both runs are compared, because the point is that they
+   are indistinguishable. */
+const again = await synthesise({ text: ARTICLE, lang: 'en', locale: 'en-GB' });
+
+t('a second ask for the same page is served from the cache', () => {
+  assert.equal(again.cached, true, 'the second call was not a hit');
+});
+
+t('and a hit hands back the same audio, not a result with no audio in it', () => {
+  assert.ok(again.spoken.mp3, 'a hit returned no audio at all');
+  assert.equal(again.spoken.mp3.length, spoken.mp3.length);
+  assert.ok(again.spoken.mp3.equals(spoken.mp3), 'the bytes differ');
+  assert.equal(again.meta.seconds, meta.seconds, 'a hit reported a different length');
+  assert.ok(again.meta.firstByteMs > 0, `firstByteMs was ${again.meta.firstByteMs}`);
+  assert.ok(again.meta.synthMs > 0, `synthMs was ${again.meta.synthMs}`);
+});
+
+t('a hit reports the same fields a fresh run does', () => {
+  for (const key of ['digest', 'engine', 'translate', 'language', 'languageCode',
+    'pieces', 'seconds', 'bytes', 'chars', 'totalChars', 'truncated']) {
+    assert.ok(key in again.meta, `a hit is missing ${key}`);
+    assert.ok(key in meta, `a fresh run is missing ${key}`);
+  }
+  assert.equal(again.meta.language, meta.language, 'the language changed between runs');
+  assert.equal(again.meta.languageCode, meta.languageCode);
+});
+
+t('a page in the language it is already in is read without translating it', () => {
+  assert.equal(meta.languageCode, 'en', 'English resolved to something else');
+  assert.ok(meta.seconds > 0, 'and it produced no audio');
+});
+
+t('the page is capped before the model sees it', () => {
+  assert.ok(clipped.text.length <= config.maxChars, `got ${clipped.text.length}`);
 });
 t('it ends on a full stop', () => assert.ok(clipped.text.endsWith('.'), clipped.text.slice(-40)));
 t('the article was long enough to be trimmed', () => assert.equal(meta.truncated, true));
 t('speech keeps up with the clock', () => {
-  // Pieces are spoken in parallel, so this is expected to be faster than
   // realtime rather than matching it.
   const ratio = meta.seconds / (meta.synthMs / 1000);
   assert.ok(ratio > 0.5, `throughput only ${ratio.toFixed(2)}x realtime`);
-  console.log(`       throughput ${ratio.toFixed(2)}x realtime across ${meta.pieces} pieces`);
 });
 t('the bitrate holds regardless of clip length', () => {
   // The cost that matters is bytes per second of audio, not the file total: a
@@ -71,9 +148,16 @@ t('the bitrate holds regardless of clip length', () => {
   assert.ok(perSecond < 4 * 1024, `${(perSecond / 1024).toFixed(2)} KB per second of audio`);
   console.log(`       ${(perSecond / 1024).toFixed(2)} KB per second of audio`);
 });
-t('a full length article still fits the 1000 character cap', () => {
-  console.log(`       ${meta.chars} of ${meta.totalChars} characters, ${meta.seconds}s of audio, ${(meta.bytes / 1024).toFixed(0)} KB`);
-  assert.ok(meta.chars <= 1000);
+t('the whole page is read, in pieces, and joined into one clip', () => {
+  // The text is translated and then spoken in full, so the audio should be about
+  // as long as the characters warrant at a speaking rate. A clip far shorter means
+  // words were dropped; a far longer one means the pieces were not joined once.
+  const spoken = meta.seconds * 14;
+  console.log(`       ${meta.chars} chars in, about ${spoken.toFixed(0)} spoken, `
+    + `${meta.pieces} piece(s), ${meta.seconds}s of audio, ${config.speechEngine}`);
+  assert.ok(spoken > config.maxChars * 0.4,
+    `only about ${spoken.toFixed(0)} characters were spoken for ${config.maxChars} of text`);
+  assert.ok(meta.pieces >= 1, 'the page was split into pieces to speak');
 });
 
 const decoder = new MPEGDecoder();
@@ -126,16 +210,20 @@ t('the status payload carries what the widget reads', () => {
 const poisoned = await getCached(digestFor({
   text: 'This entry was written by a build that stored the wrong bytes.',
   languageCode: 'en',
+  translateEngine: config.translateEngine,
+  speechEngine: config.speechEngine,
   voice: config.ttsVoice,
-  model: config.ttsModel,
+  model: config.speechEngine === 'live' ? config.liveModel : config.ttsModel,
   kbps: config.mp3Kbps,
   sampleRate: config.mp3SampleRate,
 }));
 await putCached(digestFor({
   text: 'This entry was written by a build that stored the wrong bytes.',
   languageCode: 'en',
+  translateEngine: config.translateEngine,
+  speechEngine: config.speechEngine,
   voice: config.ttsVoice,
-  model: config.ttsModel,
+  model: config.speechEngine === 'live' ? config.liveModel : config.ttsModel,
   kbps: config.mp3Kbps,
   sampleRate: config.mp3SampleRate,
 }), Buffer.from('[object Object]'), { seconds: 95, language: 'English' });
@@ -143,18 +231,23 @@ await putCached(digestFor({
 const afterPoison = await getCached(digestFor({
   text: 'This entry was written by a build that stored the wrong bytes.',
   languageCode: 'en',
+  translateEngine: config.translateEngine,
+  speechEngine: config.speechEngine,
   voice: config.ttsVoice,
-  model: config.ttsModel,
+  model: config.speechEngine === 'live' ? config.liveModel : config.ttsModel,
   kbps: config.mp3Kbps,
   sampleRate: config.mp3SampleRate,
 }));
-ok('a cache entry that is not audio is refused as a miss, not served', poisoned === null && afterPoison === null);
-ok('and the bad entry is gone rather than left to be found again',
-  await getCached(digestFor({
+t('a cache entry that is not audio is refused as a miss, not served',
+  () => poisoned === null && afterPoison === null);
+t('and the bad entry is gone rather than left to be found again',
+  async () => await getCached(digestFor({
     text: 'This entry was written by a build that stored the wrong bytes.',
     languageCode: 'en',
+    translateEngine: config.translateEngine,
+    speechEngine: config.speechEngine,
     voice: config.ttsVoice,
-    model: config.ttsModel,
+    model: config.speechEngine === 'live' ? config.liveModel : config.ttsModel,
     kbps: config.mp3Kbps,
     sampleRate: config.mp3SampleRate,
   })) === null);

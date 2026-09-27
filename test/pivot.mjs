@@ -68,9 +68,21 @@ await t('a clean translation is asked for once', async () => {
   const result = await translateOutOfThai('Hello', { lang: 'swh' }, 3, async () => {
     calls += 1;
     return { text: SWAHILI_TEXT, name: 'Swahili', code: 'swh', detected: 'en' };
-  });
+  }, 'unofficial');
   assert.equal(calls, 1, 'no reason to ask again');
   assert.equal(result.code, 'swh');
+});
+
+await t('the Cloud engine is not asked to check for Thai at all', async () => {
+  // It translates directly, so there is no pivot to have failed. Looping anyway
+  // would mean rejecting good translations for containing a Thai word.
+  let calls = 0;
+  const result = await translateOutOfThai('Hello', { lang: 'swh' }, 3, async () => {
+    calls += 1;
+    return { text: THAI_TEXT, name: 'Swahili', code: 'swh' };
+  }, 'cloud');
+  assert.equal(calls, 1, 'one call, no retry loop');
+  assert.equal(result.text, THAI_TEXT, 'what Cloud returned is what is used');
 });
 
 await t('a translation that is still Thai is asked for again', async () => {
@@ -79,7 +91,7 @@ await t('a translation that is still Thai is asked for again', async () => {
     calls += 1;
     // Fails twice, then works: the point is that it does not give up at once.
     return { text: calls < 3 ? THAI_TEXT : SWAHILI_TEXT, name: 'Swahili', code: 'swh' };
-  });
+  }, 'unofficial');
   assert.equal(calls, 3, 'it asked until the answer changed');
   assert.equal(result.text, SWAHILI_TEXT, 'and kept the good one');
 });
@@ -90,7 +102,7 @@ await t('a translation that is always Thai gives up and says why', async () => {
     () => translateOutOfThai('Hello', { lang: 'swh' }, 3, async () => {
       calls += 1;
       return { text: THAI_TEXT, name: 'Swahili', code: 'swh' };
-    }),
+    }, 'unofficial'),
     /came back in Thai after 3 attempts.*Swahili/s,
   );
   assert.equal(calls, 3, 'it asked exactly as many times as it was told to');
@@ -103,7 +115,7 @@ await t('a language it will not produce is never recorded as that language', asy
   try {
     const result = await translateOutOfThai('Nairobi', { lang: 'swh' }, 3, async () => ({
       text: THAI_TEXT, name: 'Swahili', code: 'swh',
-    }));
+    }), 'unofficial');
     recorded = result;
   } catch {
     recorded = null;

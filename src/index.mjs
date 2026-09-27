@@ -17,15 +17,34 @@
  */
 import { serve, WorkflowNonRetryableError } from '@upstash/workflow';
 import { checkAuth, corsHeaders } from './lib/auth.mjs';
-import { checkStart } from './lib/ratelimit.mjs';
-import { UnsupportedPageError } from './lib/extract.mjs';
-import { readSource, limitText, translateOutOfThai, speak, resolveLanguage } from './lib/pipeline.mjs';
+import { checkFlood, claimBudget } from './lib/ratelimit.mjs';
+import { readSource, synthesise } from './lib/pipeline.mjs';
 import { languageCatalogue } from './lib/languages.mjs';
 import { config } from './lib/config.mjs';
-import { digestFor, getCached, putCached } from './lib/store.mjs';
 import { markDone, markFailed, markRunning, putAudio, getMeta, getAudio, isValidRunId } from './lib/store.mjs';
 
 const UNSUPPORTED = 'Sorry, this webpage is not supported.';
+
+/* Shown to anyone integrating against this deployment.
+ *
+ * The synthesis is done by a Gemini Live session opened with a key this
+ * repository pays for, and that key has a budget. It is shared, so it can be
+ * exhausted by other callers, and there is no way to bill the person asking for
+ * the audio. That makes this a place to develop and demonstrate the widget, not
+ * something to put in front of readers who expect it to be there next minute.
+ * Saying so in the first response an integrator receives is cheaper than
+ * letting them find out in production. */
+const USAGE_NOTICE = {
+  status: 'self-hosted',
+  message:
+    'This endpoint is not a shared public service. It belongs to whoever deployed this '
+    + 'code, runs on their own Gemini API key, and spends their own quota, so what it can '
+    + 'serve is bounded by the plan they chose rather than by this project.',
+  production:
+    'Deploy your own instance with your own paid Gemini API key, as DEPLOY.md sets out, and '
+    + 'point the widget at it. Keep the paid key server-side: a key placed in browser code is '
+    + 'readable by anyone who loads the page, and they can spend your quota at your expense.',
+};
 
 /* A step that reports its own failure, rather than throwing it.
  *
@@ -49,19 +68,19 @@ async function attempt(work) {
   }
 }
 
-/* What the reader is told, which is not what the log says. A page that cannot
-   be read is worth saying plainly, and a page that could not be fetched should
-   not read as though the reader had asked for something impossible. */
-function describe(failure) {
-  if (failure.name === 'UnsupportedPageError') return UNSUPPORTED;
-  if (/came back in Thai/.test(failure.message)) {
-    return 'This article could not be translated into the language you chose. Please try again.';
+/* What the reader is told, which is not what the log says.
+ *
+ * Every failure now comes from the one model call, so the only thing worth
+ * softening is that call being busy or rate limited. An earlier version matched
+ * any "HTTP 4" and reported it as a page that could not be fetched, which was
+ * simply untrue: nothing here fetches a page, and a reader told to check the
+ * address had no address to check. */
+export function describe(failure) {
+  if (/quota|rate limit|RESOURCE_EXHAUSTED|\b429\b|\b503\b|UNAVAILABLE|overloaded|capacity/i.test(failure.message)) {
+    return 'The speech service is busy just now. Please try again in a moment.';
   }
-  if (/translate: HTTP 5|fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|getaddrinfo|timeout/i.test(failure.message)) {
-    return 'The translation service is not answering properly just now. Please try again.';
-  }
-  if (/HTTP 4|not found|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|getaddrinfo/i.test(failure.message)) {
-    return 'That page could not be fetched. Check the address and try again.';
+  if (/ETIMEDOUT|timeout|ECONNRESET|fetch failed|ENOTFOUND|ECONNREFUSED|socket|disconnect/i.test(failure.message)) {
+    return 'The connection to the speech service dropped. Please try again.';
   }
   return failure.message || 'Something went wrong.';
 }
@@ -105,85 +124,36 @@ const workflow = serve(
     }
 
     const source = read.value;
-    const clipped = await context.run('limit', () => attempt(() => limitText(source.text)));
 
-    if (!clipped.ok) {
-      const message = describe(clipped);
-      await context.run('report', () => markFailed(runId, message));
-      throw new WorkflowNonRetryableError(message);
-    }
-
-    const text = clipped.value;
-
-    // Reuse a recording of exactly this text in exactly this language before
-    // spending a model on it again.
-    const language = resolveLanguage(body.lang, body.locale);
-    const cached = await context.run('check-cache', () => attempt(() => getCached(digestFor({
-      text: text.text,
-      languageCode: language.code,
-      voice: config.ttsVoice,
-      model: config.ttsModel,
-      kbps: config.mp3Kbps,
-      sampleRate: config.mp3SampleRate,
-    }))));
-
-    if (cached.ok && cached.value) {
-      const hit = cached.value;
-      await context.run('store-cached', () => attempt(async () => {
-        await putAudio(runId, audioIn(hit.mp3));
-        await markDone(runId, { ...hit.meta, cached: true });
+    // Everything from here is the library's chain, called rather than copied:
+    // clip, fold the settings into a digest, reuse a recording, translate into
+    // the language asked for, speak in pieces, join, and cache the result. The
+    // copy that stood here before had drifted: it never translated at all, so a
+    // reader asking for Swahili was handed the page in the language the page was
+    // in, recorded, and labelled Swahili. One code path is the only defence
+    // against a drift like that, because the tests guard the library and the
+    // library is what runs.
+    const made = await context.run('record', () =>
+      attempt(async () => {
+        const result = await synthesise({ text: source.text, lang: body.lang, locale: body.locale });
+        return { spoken: audioOut(result.spoken), meta: result.meta };
       }));
-      return { state: 'done', runId, cached: true };
-    }
 
-    const translated = await context.run('translate', () =>
-      attempt(() => translateOutOfThai(text.text, body, config.translateAttempts)));
-
-    if (!translated.ok) {
-      const message = describe(translated);
+    if (!made.ok) {
+      const message = describe(made);
       await context.run('report', () => markFailed(runId, message));
       throw new WorkflowNonRetryableError(message);
     }
 
-    const spoken = await context.run('record', () =>
-      attempt(async () => audioOut(await speak(translated.value.text))));
-
-    if (!spoken.ok) {
-      const message = describe(spoken);
-      await context.run('report', () => markFailed(runId, message));
-      throw new WorkflowNonRetryableError(message);
-    }
-
-    const mp3 = audioIn(spoken.value.mp3);
-    const audio = { ...spoken.value, mp3 };
-    const meta = {
-      language: translated.value.name,
-      languageCode: translated.value.code,
-      chars: text.text.length,
-      totalChars: text.totalChars,
-      truncated: text.truncated,
-      via: source.via,
-      seconds: Number(audio.seconds.toFixed(2)),
-      bytes: mp3.length,
-      firstByteMs: audio.firstByteMs,
-      synthMs: audio.synthMs,
-    };
-
-    await context.run('save-cache', () => attempt(() => putCached(digestFor({
-      text: text.text,
-      languageCode: translated.value.code,
-      voice: config.ttsVoice,
-      model: config.ttsModel,
-      kbps: config.mp3Kbps,
-      sampleRate: config.mp3SampleRate,
-    }), mp3, { ...meta, pieces: audio.pieces })));
+    const mp3 = audioIn(made.value.spoken.mp3);
+    const meta = { ...made.value.meta, via: source.via };
 
     await context.run('store', () => attempt(async () => {
       await putAudio(runId, mp3);
       await markDone(runId, meta);
     }));
 
-    return { state: 'done', runId };
+    return { state: 'done', runId, cached: made.value.meta.cached === true };
   },
   { retries: 2 },
 );
@@ -191,6 +161,21 @@ const workflow = serve(
 const { handler: workflowHandler } = workflow;
 
 /** Wrap the workflow so the plain routes never start a run. */
+/** Render a refusal from either limit, the same way for both. */
+function limitResponse(limit, cors) {
+  return Response.json(
+    { error: limit.error },
+    {
+      status: limit.status,
+      headers: {
+        ...cors,
+        'retry-after': String(limit.retryAfter ?? 60),
+        'x-listen-limit': limit.scope ?? '',
+      },
+    },
+  );
+}
+
 export default {
   async fetch(request) {
     const url = new URL(request.url);
@@ -208,7 +193,7 @@ export default {
        The origin allowlist still applies. */
     if (url.pathname === '/languages' && request.method === 'GET') {
       return Response.json(
-        { languages: languageCatalogue() },
+        { notice: USAGE_NOTICE, languages: languageCatalogue() },
         { headers: { ...cors, 'cache-control': 'public, max-age=3600' } },
       );
     }
@@ -261,20 +246,8 @@ export default {
            moment a run starts, so this is the only route that is limited.
            Polling and collecting cost nothing and must not be, or waiting for
            an article would count against the reader. */
-        const limit = await checkStart(request);
-        if (!limit.ok) {
-          return Response.json(
-            { error: limit.error },
-            {
-              status: limit.status,
-              headers: {
-                ...cors,
-                'retry-after': String(limit.retryAfter ?? 60),
-                'x-listen-limit': limit.scope ?? '',
-              },
-            },
-          );
-        }
+        const flood = await checkFlood(request);
+        if (!flood.ok) return limitResponse(flood, cors);
       }
 
       // A body that is not an object would be parsed as a bare string and
@@ -283,7 +256,7 @@ export default {
         const contentType = request.headers.get('content-type') || '';
         if (!contentType.includes('application/json')) {
           return Response.json(
-            { error: 'send JSON with `text` or `url`' },
+            { error: 'send JSON with `text`' },
             { status: 415, headers: cors },
           );
         }
@@ -302,7 +275,7 @@ export default {
 
         if (!body || typeof body !== 'object' || Array.isArray(body)) {
           return Response.json(
-            { error: 'send a JSON object with `text` or `url`' },
+            { error: 'send a JSON object with `text`' },
             { status: 400, headers: cors },
           );
         }
@@ -311,13 +284,19 @@ export default {
         // run, so the reader is told straight away instead of watching a run
         // that was always going to fail.
         const hasText = typeof body.text === 'string' && body.text.trim().length > 0;
-        const hasUrl = typeof body.url === 'string' && body.url.trim().length > 0;
-        if (!hasText && !hasUrl) {
+        if (!hasText) {
           return Response.json(
-            { error: 'give me something to read: `text` or `url`' },
+            { error: 'give me something to read: `text`' },
             { status: 400, headers: cors },
           );
         }
+
+        /* Only now is it certain a run is about to start and the Gemini quota
+           is about to be spent, so only now are the daily allowance and the
+           service budget charged. A caller that floods us with empty bodies
+           still spends the flood guard, but cannot spend the day's money. */
+        const budget = await claimBudget(request);
+        if (!budget.ok) return limitResponse(budget, cors);
       }
 
       const response = await workflowHandler(request);

@@ -19,8 +19,10 @@ const AUDIO_TTL_SECONDS = 60 * 60 * 12;       // 12 h for the audio itself
    and an article that changes under a stable URL is not served stale audio. */
 const CACHE_TTL_SECONDS = Number(process.env.LISTEN_CACHE_TTL_SECONDS || 60 * 60 * 24 * 14);
 
-/** Bumped when the shape or the settings of a recording change. */
-const CACHE_VERSION = 'v1';
+/** Bumped when the shape or the settings of a recording change.
+ *  v2 is the text-to-speech system instruction: audio recorded before it
+ *  was made by a model free to answer a question instead of reading it. */
+const CACHE_VERSION = 'v2';
 
 const cacheKey = (digest) => `listen:cache:${CACHE_VERSION}:${digest}`;
 
@@ -71,13 +73,19 @@ export async function getAudio(runId) {
  * spoken in, and every setting that changes the resulting samples. Two requests
  * agreeing on all of this must get the same audio.
  */
-export function digestFor({ text, languageCode, voice, model, kbps, sampleRate }) {
+export function digestFor({
+  text, languageCode, translateEngine, speechEngine, voice, model, kbps, sampleRate,
+}) {
   return createHash('sha256')
     .update([
       CACHE_VERSION,
       model,
       voice,
       languageCode,
+      // Which services spoke it is part of what the recording is. A Gemini TTS
+      // clip and a Live clip of the same words are different audio, and one must
+      // never be served for the other because the keys happen to match.
+      `${translateEngine}+${speechEngine}`,
       `${kbps}kbps`,
       `${sampleRate}Hz`,
       // Collapse whitespace so a reflowed page still hits the same entry.
@@ -119,20 +127,6 @@ export async function putCached(digest, mp3, meta) {
     { mp3: mp3.toString('base64'), meta },
     { ex: CACHE_TTL_SECONDS },
   );
-}
-
-/** A page address mapped to the text it produced, to skip the fetch on a revisit. */
-const urlKey = (digest) => `listen:url:${CACHE_VERSION}:${digest}`;
-
-export const digestUrl = (url) =>
-  createHash('sha256').update(String(url).trim().toLowerCase()).digest('hex').slice(0, 32);
-
-export async function getUrlText(digest) {
-  return redis().get(urlKey(digest));
-}
-
-export async function putUrlText(digest, text) {
-  await redis().set(urlKey(digest), text, { ex: 60 * 60 * 6 });
 }
 
 /** A run id is a wfr_ token from the SDK, so keep the shape tight. */

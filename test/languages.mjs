@@ -78,9 +78,10 @@ t('a locale is read as the country it names', () => {
   assert.equal(defaultForLocale(undefined), 'en');
 });
 
-t('every language Google can translate is offered', () => {
-  // There is no per-language voice to confirm: text is pivoted through Thai
-  // and read by the one English voice, so translatability is the whole test.
+t('every language in the table is offered', () => {
+  // There is no per-language voice to confirm, so this asserts the table is
+  // consistent with itself rather than that any language has been heard
+  // pronounced well. The honest check for that is listening to one.
   const notOffered = SPEECH_LANGUAGES.filter((l) => !l.tts);
   assert.deepEqual(notOffered.map((l) => l.name), [],
     `held back: ${notOffered.map((l) => l.name).join(', ')}`);
