@@ -8,7 +8,7 @@ aloud. No build step, no framework, no SDK to install.
 
 ## Before you integrate this: the public endpoint is for testing
 
-The deployment at `afrispeech-listen.walusungungulube.workers.dev` synthesises
+The deployment at `listen.example.org` synthesises
 speech by opening a **Gemini Live** session with an API key that this project
 pays for. That budget is shared, finite, and yours cannot be billed against it.
 
@@ -27,8 +27,8 @@ Put this in the `<head>` of any page with article text on it:
 
 ```html
 <script
-  src="https://afrispeech.org/afrispeech-listen.js"
-  data-endpoint="https://afrispeech-listen.walusungungulube.workers.dev"
+  src="https://cdn.example.org/afrispeech-listen.js"
+  data-endpoint="https://listen.example.org"
   defer></script>
 ```
 
@@ -51,7 +51,7 @@ All optional, set on the script tag:
 
 ```html
 <script
-  src="https://afrispeech.org/afrispeech-listen.js"
+  src="https://cdn.example.org/afrispeech-listen.js"
   data-lang="swh"
   data-position="bottom-left"
   data-label="Soma"
@@ -94,7 +94,7 @@ pointed at our shared budget, and the next section is the part that matters.
 The widget is a thin client over four endpoints. If you would rather build the
 button yourself, this is the whole contract.
 
-Base URL: `https://afrispeech-listen.walusungungulube.workers.dev`
+Base URL: `https://listen.example.org`
 
 That is a `workers.dev` address, which is what this deployment publishes to. It
 has no custom domain behind it, so there is nothing to point DNS at and nothing
@@ -181,7 +181,7 @@ cannot send a custom header, and the request comes back 401.
 ### A whole client, in twenty lines
 
 ```js
-const BASE = 'https://afrispeech-listen.walusungungulube.workers.dev';
+const BASE = 'https://listen.example.org';
 const KEY = 'your-key';
 const headers = { 'x-listen-key': KEY, 'content-type': 'application/json' };
 

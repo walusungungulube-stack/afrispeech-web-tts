@@ -73,15 +73,19 @@ export async function getAudio(runId) {
  * spoken in, and every setting that changes the resulting samples. Two requests
  * agreeing on all of this must get the same audio.
  */
-export function digestFor({ text, languageCode, summaryChars, voice, model, kbps, sampleRate }) {
+export function digestFor({
+  text, languageCode, translateEngine, speechEngine, voice, model, kbps, sampleRate,
+}) {
   return createHash('sha256')
     .update([
       CACHE_VERSION,
       model,
       voice,
       languageCode,
-      // The budget decides how much is spoken, so two budgets are two recordings.
-      `${summaryChars}chars`,
+      // Which services spoke it is part of what the recording is. A Gemini TTS
+      // clip and a Live clip of the same words are different audio, and one must
+      // never be served for the other because the keys happen to match.
+      `${translateEngine}+${speechEngine}`,
       `${kbps}kbps`,
       `${sampleRate}Hz`,
       // Collapse whitespace so a reflowed page still hits the same entry.

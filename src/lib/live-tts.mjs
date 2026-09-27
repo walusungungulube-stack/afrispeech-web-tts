@@ -1,5 +1,5 @@
 /**
- * Speech synthesis over the Gemini Live API, using the official SDK.
+ * Speech over the Gemini Live API, using the official SDK.
  *
  * Two things the SDK requires that are easy to get wrong:
  *
@@ -9,54 +9,27 @@
  *     is not always assigned yet. We hold the text until both the socket is
  *     open and the session exists rather than guessing with a timeout.
  *
- * Live synthesises at roughly 0.93x realtime, so the audio takes about as long
- * to arrive as it is long. That is the reason this runs as a durable workflow
- * step rather than inside a request that has to answer within a few seconds.
+ * The text sent here has already been translated, so this is only ever the
+ * speaking step: the model is given words in the reader's language and asked to
+ * read them, not asked to understand them. The instruction pins it to that,
+ * because the models are conversational and handed a page of text with nothing
+ * else they will discuss it rather than read it.
+ *
+ * Live will not hold a turn open long enough for a whole article, which is why
+ * the pipeline sends it a piece at a time, and it is metered far more tightly
+ * than the request-based TTS engine: on one key, sixteen concurrent sessions
+ * were enough to have eleven refused. It is the experimental option and is
+ * offered as such in the docs.
  */
 import { GoogleGenAI } from '@google/genai';
 
-/**
- * The Live models are conversational: handed a page of text with nothing else
- * they will discuss it rather than speak it. This pins them to the job, and it
- * rides on the session config rather than the message, so it is not re-sent on
- * every turn and cannot be read as part of the page.
- *
- * The model both reduces the page and speaks the result. That is deliberate: the
- * summary is capped at a few hundred characters, so a reader gets a clip worth
- * their time rather than a whole page read out at length, and the same turn
- * both reduces and speaks, which costs one model call instead of two. The
- * specific language and budget travel in the per-turn context line.
- */
 const TTS_SYSTEM_INSTRUCTION =
-  'You are a text-to-speech engine for people who cannot read the screen. The ' +
-  'user message names a target language and a character budget, and then gives ' +
-  'the text of a web page. Reduce that page to a summary that fits inside the ' +
-  'character budget and is written in the target language, then read only that ' +
-  'summary aloud, in that language. Never read the original text aloud. Keep ' +
-  'the summary faithful to the page: do not answer the page, do not comment ' +
-  'on it, do not add anything that is not in it, and do not invent facts. ' +
-  'Speak only the summary.';
-
-/**
- * Whether this failure is a refused quota rather than a bad connection.
- *
- * Gemini does not answer with a status code here. It accepts the socket, lets
- * the turn start, and then closes with 1011 and a message about exceeding the
- * current quota, which arrives as a close event rather than an error and so
- * looks identical to a dropped connection unless the reason is read. It is also
- * the one failure worth reporting differently to the reader: they are being
- * throttled, their request is fine, and trying again in a moment is the whole
- * remedy.
- *
- * Both spellings are matched because the model has used both, and a closed
- * session is a 1011 with no reason at all when the text is too long, which is
- * not a quota problem and must stay retryable.
- */
-export function isQuotaError(error) {
-  const text = String(error?.message ?? error ?? '');
-  if (/exceeded your current quota|quota exceeded|RESOURCE_EXHAUSTED/i.test(text)) return true;
-  return /\b429\b/.test(text);
-}
+  'You are a text-to-speech engine for people who cannot read the screen. You are sent '
+  + 'text that has already been translated, sometimes preceded by a context line '
+  + 'describing how to speak it. Read that text aloud, exactly as written, in the '
+  + 'language it is written in. Do not summarise it, do not discuss it, do not answer '
+  + 'it, do not add anything, and do not read the context line out loud. Speak only '
+  + 'the text you were given, in that order.';
 
 /**
  * @param {object} options
@@ -170,3 +143,7 @@ export function liveTts({
       .catch((error) => settle(new Error(`live-tts: connect failed: ${error.message}`)));
   });
 }
+
+/* Both Gemini engines are refused in the same words, so the check lives with them
+ * and is re-exported here because most callers reach it through the Live path. */
+export { isQuotaError } from './gemini.mjs';

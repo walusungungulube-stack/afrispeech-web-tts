@@ -96,6 +96,41 @@ console.log(`  ${meta.chars}/${meta.totalChars} chars, truncated=${meta.truncate
 console.log(`  ${meta.seconds}s audio, ${(meta.bytes / 1024).toFixed(0)} KB, first byte ${meta.firstByteMs}ms, synth ${(meta.synthMs / 1000).toFixed(1)}s`);
 console.log(`  wall ${((Date.now() - started) / 1000).toFixed(1)}s\n`);
 
+/* Ask twice. The second call is a cache hit and costs nothing, and it is a
+   different code path: a hit rebuilds the result from what was stored rather
+   than from what was just made, so a field left out of the stored copy is a field
+   the caller does not get. Both runs are compared, because the point is that they
+   are indistinguishable. */
+const again = await synthesise({ text: ARTICLE, lang: 'en', locale: 'en-GB' });
+
+t('a second ask for the same page is served from the cache', () => {
+  assert.equal(again.cached, true, 'the second call was not a hit');
+});
+
+t('and a hit hands back the same audio, not a result with no audio in it', () => {
+  assert.ok(again.spoken.mp3, 'a hit returned no audio at all');
+  assert.equal(again.spoken.mp3.length, spoken.mp3.length);
+  assert.ok(again.spoken.mp3.equals(spoken.mp3), 'the bytes differ');
+  assert.equal(again.meta.seconds, meta.seconds, 'a hit reported a different length');
+  assert.ok(again.meta.firstByteMs > 0, `firstByteMs was ${again.meta.firstByteMs}`);
+  assert.ok(again.meta.synthMs > 0, `synthMs was ${again.meta.synthMs}`);
+});
+
+t('a hit reports the same fields a fresh run does', () => {
+  for (const key of ['digest', 'engine', 'translate', 'language', 'languageCode',
+    'pieces', 'seconds', 'bytes', 'chars', 'totalChars', 'truncated']) {
+    assert.ok(key in again.meta, `a hit is missing ${key}`);
+    assert.ok(key in meta, `a fresh run is missing ${key}`);
+  }
+  assert.equal(again.meta.language, meta.language, 'the language changed between runs');
+  assert.equal(again.meta.languageCode, meta.languageCode);
+});
+
+t('a page in the language it is already in is read without translating it', () => {
+  assert.equal(meta.languageCode, 'en', 'English resolved to something else');
+  assert.ok(meta.seconds > 0, 'and it produced no audio');
+});
+
 t('the page is capped before the model sees it', () => {
   assert.ok(clipped.text.length <= config.maxChars, `got ${clipped.text.length}`);
 });
@@ -113,14 +148,16 @@ t('the bitrate holds regardless of clip length', () => {
   assert.ok(perSecond < 4 * 1024, `${(perSecond / 1024).toFixed(2)} KB per second of audio`);
   console.log(`       ${(perSecond / 1024).toFixed(2)} KB per second of audio`);
 });
-t('what is spoken is a summary, not the whole page', () => {
-  // Speaking 3000 characters aloud would run to several minutes. The budget is
-  // a few hundred, so a clip minutes long means the model read the page instead
-  // of reducing it, which is the failure this guards.
+t('the whole page is read, in pieces, and joined into one clip', () => {
+  // The text is translated and then spoken in full, so the audio should be about
+  // as long as the characters warrant at a speaking rate. A clip far shorter means
+  // words were dropped; a far longer one means the pieces were not joined once.
   const spoken = meta.seconds * 14;
-  console.log(`       ${meta.chars} chars in, about ${spoken.toFixed(0)} spoken, ${meta.seconds}s of audio`);
-  assert.ok(spoken <= config.summaryMaxChars * 2,
-    `about ${spoken.toFixed(0)} characters were spoken, budget is ${config.summaryMaxChars}`);
+  console.log(`       ${meta.chars} chars in, about ${spoken.toFixed(0)} spoken, `
+    + `${meta.pieces} piece(s), ${meta.seconds}s of audio, ${config.speechEngine}`);
+  assert.ok(spoken > config.maxChars * 0.4,
+    `only about ${spoken.toFixed(0)} characters were spoken for ${config.maxChars} of text`);
+  assert.ok(meta.pieces >= 1, 'the page was split into pieces to speak');
 });
 
 const decoder = new MPEGDecoder();
@@ -173,18 +210,20 @@ t('the status payload carries what the widget reads', () => {
 const poisoned = await getCached(digestFor({
   text: 'This entry was written by a build that stored the wrong bytes.',
   languageCode: 'en',
-  summaryChars: config.summaryMaxChars,
+  translateEngine: config.translateEngine,
+  speechEngine: config.speechEngine,
   voice: config.ttsVoice,
-  model: config.ttsModel,
+  model: config.speechEngine === 'live' ? config.liveModel : config.ttsModel,
   kbps: config.mp3Kbps,
   sampleRate: config.mp3SampleRate,
 }));
 await putCached(digestFor({
   text: 'This entry was written by a build that stored the wrong bytes.',
   languageCode: 'en',
-  summaryChars: config.summaryMaxChars,
+  translateEngine: config.translateEngine,
+  speechEngine: config.speechEngine,
   voice: config.ttsVoice,
-  model: config.ttsModel,
+  model: config.speechEngine === 'live' ? config.liveModel : config.ttsModel,
   kbps: config.mp3Kbps,
   sampleRate: config.mp3SampleRate,
 }), Buffer.from('[object Object]'), { seconds: 95, language: 'English' });
@@ -192,9 +231,10 @@ await putCached(digestFor({
 const afterPoison = await getCached(digestFor({
   text: 'This entry was written by a build that stored the wrong bytes.',
   languageCode: 'en',
-  summaryChars: config.summaryMaxChars,
+  translateEngine: config.translateEngine,
+  speechEngine: config.speechEngine,
   voice: config.ttsVoice,
-  model: config.ttsModel,
+  model: config.speechEngine === 'live' ? config.liveModel : config.ttsModel,
   kbps: config.mp3Kbps,
   sampleRate: config.mp3SampleRate,
 }));
@@ -204,9 +244,10 @@ t('and the bad entry is gone rather than left to be found again',
   async () => await getCached(digestFor({
     text: 'This entry was written by a build that stored the wrong bytes.',
     languageCode: 'en',
-    summaryChars: config.summaryMaxChars,
+    translateEngine: config.translateEngine,
+    speechEngine: config.speechEngine,
     voice: config.ttsVoice,
-    model: config.ttsModel,
+    model: config.speechEngine === 'live' ? config.liveModel : config.ttsModel,
     kbps: config.mp3Kbps,
     sampleRate: config.mp3SampleRate,
   })) === null);

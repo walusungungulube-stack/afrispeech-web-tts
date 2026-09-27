@@ -9,7 +9,7 @@ point the website widget at it. The service itself is described in
 **This is a `LISTEN_API_KEY` you supply, on your own billing.** The key is the
 only real cost in this service, and it is the one thing you cannot share.
 
-The shared deployment at `afrispeech-listen.walusungungulube.workers.dev` uses
+The shared deployment at `listen.example.org` uses
 this project's key and returns a `notice` on `GET /languages` saying so. It is
 there for integrating and demonstrating the widget. It is a public HTTP
 endpoint in front of a metered API, and there is no way to bill the person
@@ -149,7 +149,7 @@ session there. It is a single click, and it is once per account.
 ### Deploying
 
 ```sh
-git clone https://github.com/walusungungulube-stack/afrispeech-web-tts
+git clone https://github.com/<your-account>/afrispeech-web-tts
 cd afrispeech-web-tts
 git checkout read-the-words-not-the-address
 npm install
@@ -311,7 +311,7 @@ suite passes without any of the above.
 1. Clone the repository onto the box and install:
 
    ```sh
-   git clone https://github.com/walusungungulube-stack/afrispeech-web-tts
+   git clone https://github.com/<your-account>/afrispeech-web-tts
    cd afrispeech-web-tts
    npm ci
    ```
@@ -402,7 +402,7 @@ run state and the audio cache. It needs a Gemini API key, an Upstash Redis, and
 QStash credentials. On Node it is the same handler behind `server.mjs`.
 
 ```bash
-git clone https://github.com/walusungungulube-stack/afrispeech-web-tts
+git clone https://github.com/<your-account>/afrispeech-web-tts
 cd afrispeech-web-tts
 cp .env.example .env    # then fill it in
 npm install

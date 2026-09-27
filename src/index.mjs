@@ -18,10 +18,9 @@
 import { serve, WorkflowNonRetryableError } from '@upstash/workflow';
 import { checkAuth, corsHeaders } from './lib/auth.mjs';
 import { checkFlood, claimBudget } from './lib/ratelimit.mjs';
-import { readSource, limitText, speak, resolveLanguage } from './lib/pipeline.mjs';
+import { readSource, synthesise } from './lib/pipeline.mjs';
 import { languageCatalogue } from './lib/languages.mjs';
 import { config } from './lib/config.mjs';
-import { digestFor, getCached, putCached } from './lib/store.mjs';
 import { markDone, markFailed, markRunning, putAudio, getMeta, getAudio, isValidRunId } from './lib/store.mjs';
 
 const UNSUPPORTED = 'Sorry, this webpage is not supported.';
@@ -36,15 +35,15 @@ const UNSUPPORTED = 'Sorry, this webpage is not supported.';
  * Saying so in the first response an integrator receives is cheaper than
  * letting them find out in production. */
 const USAGE_NOTICE = {
-  status: 'testing-only',
+  status: 'self-hosted',
   message:
-    'This endpoint runs on a shared, limited Gemini Live budget owned by this project. '
-    + 'It is provided for integrating and testing the Listen widget, not for production traffic.',
+    'This endpoint is not a shared public service. It belongs to whoever deployed this '
+    + 'code, runs on their own Gemini API key, and spends their own quota, so what it can '
+    + 'serve is bounded by the plan they chose rather than by this project.',
   production:
-    'For production, call the Gemini Live API from your own backend using your own paid API key, '
-    + 'and keep the paid key server-side. Never ship a Gemini API key in browser code: anyone who '
-    + 'loads the page can read it and spend your quota. This project can be pointed at that '
-    + 'endpoint instead, or you can run it yourself as documented in DEPLOY.md.',
+    'Deploy your own instance with your own paid Gemini API key, as DEPLOY.md sets out, and '
+    + 'point the widget at it. Keep the paid key server-side: a key placed in browser code is '
+    + 'readable by anyone who loads the page, and they can spend your quota at your expense.',
 };
 
 /* A step that reports its own failure, rather than throwing it.
@@ -125,78 +124,36 @@ const workflow = serve(
     }
 
     const source = read.value;
-    const clipped = await context.run('limit', () => attempt(() => limitText(source.text)));
 
-    if (!clipped.ok) {
-      const message = describe(clipped);
-      await context.run('report', () => markFailed(runId, message));
-      throw new WorkflowNonRetryableError(message);
-    }
-
-    const text = clipped.value;
-
-    // Reuse a recording of exactly this text in exactly this language before
-    // spending a model on it again.
-    const language = resolveLanguage(body.lang, body.locale);
-    const cached = await context.run('check-cache', () => attempt(() => getCached(digestFor({
-      text: text.text,
-      languageCode: language.code,
-      summaryChars: config.summaryMaxChars,
-      voice: config.ttsVoice,
-      model: config.ttsModel,
-      kbps: config.mp3Kbps,
-      sampleRate: config.mp3SampleRate,
-    }))));
-
-    if (cached.ok && cached.value) {
-      const hit = cached.value;
-      await context.run('store-cached', () => attempt(async () => {
-        await putAudio(runId, audioIn(hit.mp3));
-        await markDone(runId, { ...hit.meta, cached: true });
+    // Everything from here is the library's chain, called rather than copied:
+    // clip, fold the settings into a digest, reuse a recording, translate into
+    // the language asked for, speak in pieces, join, and cache the result. The
+    // copy that stood here before had drifted: it never translated at all, so a
+    // reader asking for Swahili was handed the page in the language the page was
+    // in, recorded, and labelled Swahili. One code path is the only defence
+    // against a drift like that, because the tests guard the library and the
+    // library is what runs.
+    const made = await context.run('record', () =>
+      attempt(async () => {
+        const result = await synthesise({ text: source.text, lang: body.lang, locale: body.locale });
+        return { spoken: audioOut(result.spoken), meta: result.meta };
       }));
-      return { state: 'done', runId, cached: true };
-    }
 
-    const spoken = await context.run('record', () =>
-      attempt(async () => audioOut(await speak(text.text, language))));
-
-    if (!spoken.ok) {
-      const message = describe(spoken);
+    if (!made.ok) {
+      const message = describe(made);
       await context.run('report', () => markFailed(runId, message));
       throw new WorkflowNonRetryableError(message);
     }
 
-    const mp3 = audioIn(spoken.value.mp3);
-    const audio = { ...spoken.value, mp3 };
-    const meta = {
-      language: language.name,
-      languageCode: language.code,
-      chars: text.text.length,
-      totalChars: text.totalChars,
-      truncated: text.truncated,
-      via: source.via,
-      seconds: Number(audio.seconds.toFixed(2)),
-      bytes: mp3.length,
-      firstByteMs: audio.firstByteMs,
-      synthMs: audio.synthMs,
-    };
-
-    await context.run('save-cache', () => attempt(() => putCached(digestFor({
-      text: text.text,
-      languageCode: language.code,
-      summaryChars: config.summaryMaxChars,
-      voice: config.ttsVoice,
-      model: config.ttsModel,
-      kbps: config.mp3Kbps,
-      sampleRate: config.mp3SampleRate,
-    }), mp3, meta)));
+    const mp3 = audioIn(made.value.spoken.mp3);
+    const meta = { ...made.value.meta, via: source.via };
 
     await context.run('store', () => attempt(async () => {
       await putAudio(runId, mp3);
       await markDone(runId, meta);
     }));
 
-    return { state: 'done', runId };
+    return { state: 'done', runId, cached: made.value.meta.cached === true };
   },
   { retries: 2 },
 );

@@ -71,3 +71,20 @@ export async function withRetry(attempt_, {
   }
   throw lastError;
 }
+
+/**
+ * Split text near the middle, on a word boundary.
+ *
+ * Used as the recovery for a piece the model will not finish: two shorter pieces
+ * are more likely to succeed than the same long one asked again. Splitting is
+ * only ever a recovery from a failure, never the normal path, because the pieces
+ * are joined back into one recording and a split costs an extra session.
+ */
+export function bisect(text) {
+  const clean = String(text).trim();
+  if (clean.length < 2) return null;
+  const middle = Math.floor(clean.length / 2);
+  const space = clean.indexOf(' ', middle);
+  if (space === -1 || space === 0) return null;
+  return [clean.slice(0, space).trim(), clean.slice(space + 1).trim()];
+}
