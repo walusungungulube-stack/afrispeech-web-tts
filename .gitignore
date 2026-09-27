@@ -5,3 +5,6 @@ node_modules/
 
 # Output captured from a run that was backgrounded.
 *.out
+
+# wrangler local state and build output
+.wrangler/

@@ -1,0 +1,31 @@
+{
+  "name": "afrispeech-listen",
+  "main": "src/index.mjs",
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "GEMINI_TTS_MODEL": "gemini-3.1-flash-live-preview",
+    "GEMINI_TTS_VOICE": "Zephyr",
+    "LISTEN_ALLOWED_ORIGINS": "https://afrispeech.com,https://www.afrispeech.com",
+    "LISTEN_BUDGET_PER_DAY": "5000",
+    "LISTEN_CACHE_TTL_SECONDS": "1209600",
+    "LISTEN_MAX_CHARS": "1000",
+    "LISTEN_MAX_LIVE_SESSIONS": "16",
+    "LISTEN_MAX_SLOT_WAIT_MS": "60000",
+    "LISTEN_MP3_KBPS": "24",
+    "LISTEN_MP3_SAMPLE_RATE": "16000",
+    "LISTEN_RATE_PER_DAY": "100",
+    "LISTEN_RATE_PER_MINUTE": "5",
+    "LISTEN_TRANSLATE_ATTEMPTS": "3",
+    "LISTEN_TTS_CHUNK_CHARS": "200",
+    "LISTEN_TTS_CONCURRENCY": "4",
+    "LISTEN_TTS_MAX_ATTEMPTS": "5",
+    "LISTEN_TTS_MAX_BISECT": "2",
+    "LISTEN_TTS_TIMEOUT_MS": "120000"
+  }
+}

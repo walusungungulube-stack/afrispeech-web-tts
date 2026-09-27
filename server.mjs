@@ -6,10 +6,12 @@
  * thing that adapts Node's http server to that, so the code that is deployed is
  * the code that is tested.
  *
- * It reads its configuration from process.env, which is why this is a Node
- * service and not a Cloudflare Worker: Workers pass configuration in as an
- * `env` argument to fetch and leave process.env empty, so a Worker build of
- * this code comes up on silent defaults with no Gemini key and no origins.
+ * It reads its configuration from process.env, and so does a Cloudflare Worker:
+ * under the nodejs_compat flag workerd populates process.env from vars and
+ * secrets, including at module scope, which is where src/lib/config.mjs reads
+ * it. The same src/index.mjs therefore runs unchanged on both, and this file
+ * exists only so the service can also be run on plain Node, which is what the
+ * test suite and a local `npm start` use.
  */
 import { createServer } from 'node:http';
 import { Readable } from 'node:stream';

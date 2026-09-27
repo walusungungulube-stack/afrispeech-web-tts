@@ -11,7 +11,10 @@
     "test": "node test/auth.mjs && node test/chunk.mjs && node test/languages.mjs && node test/parallel.mjs && node test/pivot.mjs && node test/ratelimit.mjs && node test/retry.mjs && node test/routes.mjs && node test/truncate.mjs",
     "test:e2e": "node --env-file-if-exists=.env test/e2e.mjs",
     "build:speech-data": "node scripts/sync-names.mjs",
-    "test:semaphore": "node --env-file-if-exists=.env test/semaphore.mjs"
+    "test:semaphore": "node --env-file-if-exists=.env test/semaphore.mjs",
+    "dev:worker": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
   },
   "dependencies": {
     "@google/genai": "^2.24.0",
@@ -21,6 +24,7 @@
     "wasm-media-encoders": "^0.7.0"
   },
   "devDependencies": {
-    "mpg123-decoder": "^1.0.3"
+    "mpg123-decoder": "^1.0.3",
+    "wrangler": "^4.141.0"
   }
 }
