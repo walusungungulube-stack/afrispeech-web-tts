@@ -76,7 +76,7 @@ async function attempt(work) {
  * any "HTTP 4" and reported it as a page that could not be fetched, which was
  * simply untrue: nothing here fetches a page, and a reader told to check the
  * address had no address to check. */
-function describe(failure) {
+export function describe(failure) {
   if (/quota|rate limit|RESOURCE_EXHAUSTED|\b429\b|\b503\b|UNAVAILABLE|overloaded|capacity/i.test(failure.message)) {
     return 'The speech service is busy just now. Please try again in a moment.';
   }

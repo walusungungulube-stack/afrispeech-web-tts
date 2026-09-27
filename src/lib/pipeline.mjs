@@ -9,7 +9,7 @@
  */
 import { truncateToLimit } from './truncate.mjs';
 import { findSpeechLanguage, defaultForLocale } from './languages.mjs';
-import { liveTts } from './live-tts.mjs';
+import { liveTts, isQuotaError } from './live-tts.mjs';
 import { withRetry } from './retry.mjs';
 import { withSlot } from './semaphore.mjs';
 import { pcmToMp3, pcmSeconds } from './mp3.mjs';
@@ -109,7 +109,13 @@ async function speakPage(text, language) {
     timeoutMs: config.ttsTimeoutMs,
   }), { limit: config.maxLiveSessions, maxWaitMs: config.maxSlotWaitMs });
 
-  return withRetry(() => request(text), { attempts: config.ttsMaxAttempts });
+  // A refused quota is the model's answer, not a bad connection, so it is
+  // handed back rather than repeated. Sixty slots' worth of readers being
+  // throttled should not each spend four more attempts against the same limit.
+  return withRetry(() => request(text), {
+    attempts: config.ttsMaxAttempts,
+    shouldRetry: (error) => !isQuotaError(error),
+  });
 }
 
 /**

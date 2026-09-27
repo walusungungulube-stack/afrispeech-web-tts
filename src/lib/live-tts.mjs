@@ -38,6 +38,27 @@ const TTS_SYSTEM_INSTRUCTION =
   'Speak only the summary.';
 
 /**
+ * Whether this failure is a refused quota rather than a bad connection.
+ *
+ * Gemini does not answer with a status code here. It accepts the socket, lets
+ * the turn start, and then closes with 1011 and a message about exceeding the
+ * current quota, which arrives as a close event rather than an error and so
+ * looks identical to a dropped connection unless the reason is read. It is also
+ * the one failure worth reporting differently to the reader: they are being
+ * throttled, their request is fine, and trying again in a moment is the whole
+ * remedy.
+ *
+ * Both spellings are matched because the model has used both, and a closed
+ * session is a 1011 with no reason at all when the text is too long, which is
+ * not a quota problem and must stay retryable.
+ */
+export function isQuotaError(error) {
+  const text = String(error?.message ?? error ?? '');
+  if (/exceeded your current quota|quota exceeded|RESOURCE_EXHAUSTED/i.test(text)) return true;
+  return /\b429\b/.test(text);
+}
+
+/**
  * @param {object} options
  * @param {string} options.text     what to read aloud
  * @param {string} options.voice    prebuilt voice name
@@ -118,8 +139,17 @@ export function liveTts({
         if (content.turnComplete) settle();
       },
       onerror: (event) => settle(new Error(`live-tts: ${event?.message ?? 'socket error'}`)),
-      onclose: () => {
-        if (!settled) settle(new Error('live-tts: closed before the turn completed'));
+      onclose: (event) => {
+        // The close code is the only thing that distinguishes Gemini dropping
+        // the session (1011, 1008, a rate-limit close) from a socket that ended
+        // for an ordinary reason, and without it a concurrency ceiling found in
+        // production is a number nobody can explain. Some servers send no reason
+        // at all, so the code stands on its own rather than being prettied up.
+        if (!settled) {
+          const code = event?.code;
+          const reason = event?.reason ? ` ${event.reason}` : '';
+          settle(new Error(`live-tts: closed before the turn completed (code ${code ?? 'none'})${reason}`));
+        }
       },
     };
 
