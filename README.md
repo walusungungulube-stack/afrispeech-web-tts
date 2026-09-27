@@ -13,7 +13,7 @@ Put this in the `<head>` of any page with article text on it:
 ```html
 <script
   src="https://afrispeech.org/afrispeech-listen.js"
-  data-endpoint="https://listen.afrispeech.org"
+  data-endpoint="https://afrispeech-listen.walusungungulube.workers.dev"
   defer></script>
 ```
 
@@ -63,7 +63,11 @@ refused. That and the rest of running the service yourself is in
 The widget is a thin client over four endpoints. If you would rather build the
 button yourself, this is the whole contract.
 
-Base URL: `https://listen.afrispeech.org`
+Base URL: `https://afrispeech-listen.walusungungulube.workers.dev`
+
+That is a `workers.dev` address, which is what this deployment publishes to. It
+has no custom domain behind it, so there is nothing to point DNS at and nothing
+to renew.
 
 ### 1. List the languages
 
@@ -146,7 +150,7 @@ cannot send a custom header, and the request comes back 401.
 ### A whole client, in twenty lines
 
 ```js
-const BASE = 'https://listen.afrispeech.org';
+const BASE = 'https://afrispeech-listen.walusungungulube.workers.dev';
 const KEY = 'your-key';
 const headers = { 'x-listen-key': KEY, 'content-type': 'application/json' };
 
