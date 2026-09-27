@@ -26,6 +26,16 @@ export const config = {
   // take, which Google reports by handing back the Thai it was given.
   translateAttempts: clampInt(process.env.LISTEN_TRANSLATE_ATTEMPTS, 1, 6, 3),
 
+  // The service is public, so these are what stand between the Gemini quota and
+  // anyone who finds the endpoint. Set a limit to 0 to switch that one off.
+  rateEnabled: process.env.LISTEN_RATE_ENABLED !== '0',
+  // Per address, per minute, and per day.
+  ratePerMinute: clampInt(process.env.LISTEN_RATE_PER_MINUTE, 0, 600, 5),
+  ratePerDay: clampInt(process.env.LISTEN_RATE_PER_DAY, 0, 100000, 100),
+  // Across everyone, per day. The per-address limits are all bypassed by
+  // rotating address; this is the one that is not.
+  budgetPerDay: clampInt(process.env.LISTEN_BUDGET_PER_DAY, 0, 1000000, 5000),
+
   // How many Live sessions may be open across all requests at once. A piece is
   // spoken by one session, and a reader asking for an article holds up to
   // LISTEN_TTS_CONCURRENCY of them, so this is the ceiling on concurrent readers.

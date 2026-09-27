@@ -17,6 +17,7 @@
  */
 import { serve, WorkflowNonRetryableError } from '@upstash/workflow';
 import { checkAuth, corsHeaders } from './lib/auth.mjs';
+import { checkStart } from './lib/ratelimit.mjs';
 import { UnsupportedPageError } from './lib/extract.mjs';
 import { readSource, limitText, translateOutOfThai, speak, resolveLanguage } from './lib/pipeline.mjs';
 import { languageCatalogue } from './lib/languages.mjs';
@@ -252,10 +253,32 @@ export default {
     }
 
     if (url.pathname === '/speak' && request.method === 'POST') {
+      /* A signed callback from the queue is passed straight through: its
+         payload is the run's progress, not a request from a reader, and the
+         run it belongs to was already counted when it started. */
+      if (!isQueueCallback) {
+        /* What is being protected is the Gemini quota, and it is spent the
+           moment a run starts, so this is the only route that is limited.
+           Polling and collecting cost nothing and must not be, or waiting for
+           an article would count against the reader. */
+        const limit = await checkStart(request);
+        if (!limit.ok) {
+          return Response.json(
+            { error: limit.error },
+            {
+              status: limit.status,
+              headers: {
+                ...cors,
+                'retry-after': String(limit.retryAfter ?? 60),
+                'x-listen-limit': limit.scope ?? '',
+              },
+            },
+          );
+        }
+      }
+
       // A body that is not an object would be parsed as a bare string and
-      // silently treated as "no input", so say so plainly. A signed callback
-      // from the queue is passed straight through: its payload is the run's
-      // progress, not a request from a reader.
+      // silently treated as "no input", so say so plainly.
       if (!isQueueCallback) {
         const contentType = request.headers.get('content-type') || '';
         if (!contentType.includes('application/json')) {

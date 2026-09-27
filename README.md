@@ -191,9 +191,29 @@ npm start               # wrangler dev
 ```
 
 Set `LISTEN_ALLOWED_ORIGINS` to the origins allowed to call it, comma separated.
-**This is the only real access control.** A key handed to a browser is readable
-by anyone who views the source; it exists to tell your traffic apart from stray
-calls, not to keep anyone out. The origin allowlist is what does that.
+
+**Know what this does and does not do.** Neither the key nor the allowlist is
+access control:
+
+- The key is in your page source. Every visitor can read it. It is a label
+  saying "this is widget traffic", nothing more.
+- An `Origin` header is set by the browser and only the browser. `curl` sends
+  none, so the allowlist is skipped, and anyone who wants to send one can.
+
+The allowlist is worth having, because it stops other people's *pages* from
+spending your quota out of a reader's browser. But what actually caps what a
+caller can cost you is the rate limits:
+
+| Setting | Default | What it caps |
+| --- | --- | --- |
+| `LISTEN_RATE_PER_MINUTE` | 5 | Starts per address, per minute. |
+| `LISTEN_RATE_PER_DAY` | 100 | Starts per address, per day. |
+| `LISTEN_BUDGET_PER_DAY` | 5000 | Starts across everyone, per day. |
+
+Only starts are counted, so polling and collecting audio are never throttled.
+The per-address limits are all bypassed by rotating address, which is why the
+shared daily budget is the one that matters. All of them bound the damage; none
+of them make the endpoint private. Set any to 0 to switch it off.
 
 | Variable | What it is |
 | --- | --- |

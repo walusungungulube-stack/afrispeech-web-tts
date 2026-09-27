@@ -1,12 +1,23 @@
 /**
- * The endpoint spends a metered Gemini quota, so it stays shut unless a caller
- * presents the shared key from an allowed origin. Without this, anyone who can
- * read the widget's source can call the URL directly and spend the money.
+ * The key and the origin allowlist, and what they are honestly worth.
  *
- * Two deliberate choices:
+ * Neither of them is access control, and it is worth being plain about why,
+ * because the alternative is trusting them and being wrong:
+ *
+ *   - The key is in the page source. Every visitor can read it. It is a label
+ *     that says "this is widget traffic", nothing more.
+ *   - An Origin header is set by the browser, and only the browser. curl sends
+ *     none, so the allowlist below is skipped entirely, and anyone who wants to
+ *     send one can. It stops other people's *pages* from spending the quota
+ *     from a reader's browser. That is worth having, and it is not a lock.
+ *
+ * So what actually caps the cost is in ratelimit.mjs. If the quota is the thing
+ * worth protecting, that is the file to read.
+ *
+ * Two deliberate choices here:
  *
  *   - A missing key is a configuration error, not an open door. Failing open
- *     here would turn a typo into a silent, unbounded bill.
+ *     would turn a typo into a silent, unbounded bill.
  *   - CORS is driven by an allowlist. Echoing '*' would let any site on the
  *     internet spend the quota from a visitor's browser.
  */

@@ -11,6 +11,10 @@
 import assert from 'node:assert/strict';
 
 process.env.LISTEN_API_KEY ||= 'test-key-for-routes';
+/* The limiter keeps counters in Redis, and these checks are about routing and
+   validation with no Redis anywhere. It has its own checks, in
+   test/ratelimit.mjs, against a stub. */
+process.env.LISTEN_RATE_ENABLED = '0';
 
 let passed = 0;
 const check = async (name, fn) => {
