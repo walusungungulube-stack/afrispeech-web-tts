@@ -223,8 +223,7 @@ of them make the endpoint private. Set any to 0 to switch it off.
 | --- | --- |
 | `GEMINI_API_KEY` | Gemini access, with the TTS models enabled. |
 | `UPSTASH_REDIS_REST_URL` / `_TOKEN` | Run state and the audio cache. |
-| `QSTASH_REGION`, `EU_CENTRAL_1_QSTASH_URL` / `_TOKEN` | Runs the workflow off a request. |
-| `UPSTASH_WORKFLOW_URL` | Where the workflow endpoint is, once deployed. |
+| `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY` / `_NEXT_` | Runs the workflow off a request. |
 | `LISTEN_API_KEY` | The browser key, if you use one. |
 | `LISTEN_ALLOWED_ORIGINS` | Origins allowed to call this. |
 | `LISTEN_MAX_CHARS` | Ceiling on how much of a page is read. |
