@@ -1,120 +1,249 @@
-# afrispeech-web-tts
+# AfriSpeech Listen
 
-Text or a link in, a spoken MP3 out. The browser starts a run and polls; the
-work happens in an Upstash Workflow so nothing has to hold a connection open
-while an article is recorded.
+Turn any web page into audio, in the reader's own language.
 
-## Why it is built this way
+Drop one script tag on your site and readers get a **Listen** button that reads
+the page they are on, translated into any of 43 African languages and spoken
+aloud. No build step, no framework, no SDK to install.
 
-Gemini Live synthesises at about 1x realtime, so a 90 second clip takes roughly
-90 seconds to produce. A request cannot stay open for that. The recording
-therefore runs as a durable workflow, and the caller polls a run id until the
-clip is ready.
+## Add it to your page
 
-A whole article in a single Live turn does not work either: the socket opens,
-audio starts arriving, and the connection closes before the turn reports itself
-complete, losing everything after the first few seconds. So the text is split
-into sentence-sized pieces and the pieces are spoken **at the same time**,
-reassembled in order. Measured: 94 seconds of audio in 40 seconds of wall time.
+Put this in the `<head>` of any page with article text on it:
 
-## The three routes
+```html
+<script src="https://afrispeech.org/afrispeech-listen.js" defer></script>
+```
 
-    POST /speak             {"text" | "url", "lang", "locale"}
-                            200 {"workflowRunId": "wfr_...", "finishCondition": "..."}
+That is the whole integration. A button appears in the corner, and pressing it
+reads the page.
 
-    GET  /status?run=wfr_   {"state": "running" | "done" | "error" | "unknown", ...}
+The page is read **in the reader's browser**, not fetched by our server, so it
+works on pages that block automated requests and on anything rendered by
+JavaScript. Readability is only downloaded once someone actually presses the
+button, so you pay nothing until a reader uses it.
 
-    GET  /audio?run=wfr_    audio/mpeg, 16 kHz at 24 kbps
+### Options
 
-Note the trigger returns **200** and the run id is in the body as
-`workflowRunId`. It is not a 202, and there is no run id response header. Signed
-callbacks from the queue arrive at the same route and carry no shared key; they
-are left to the workflow SDK, which signs and verifies them.
+All optional, set on the script tag:
 
-## What the pipeline does
+```html
+<script
+  src="https://afrispeech.org/afrispeech-listen.js"
+  data-lang="swh"
+  data-position="bottom-left"
+  data-label="Soma"
+  defer></script>
+```
 
-1. **Read** — takes the text given, or extracts the article from a URL with
-   Readability. Redirects and private address ranges are refused.
-2. **Limit** — cuts to 1,000 characters, preferring a full sentence.
-3. **Translate** — pivots through Thai, including for English input.
-4. **Record** — splits into ~200 character pieces, speaks up to 4 at once under
-   a global cap, and joins them in order.
-5. **Store** — the MP3 in Redis, and a copy kept for reuse.
+| Attribute       | Default   | What it does                                              |
+| --------------- | --------- | --------------------------------------------------------- |
+| `data-lang`     | reader's  | Start in this language instead of asking. An AfriSpeech code, e.g. `swh`. |
+| `data-position` | `bottom-right` | `bottom-right` or `bottom-left`.                       |
+| `data-label`    | `Listen`  | The button text.                                           |
+| `data-endpoint` | the hosted service | Point it at your own deployment instead.         |
+| `data-key`      | none      | A browser key, if you run your own deployment.             |
 
-## Staying inside the model's limits
+### Before you go live
 
-Two caps, because they solve different problems.
+If you are pointing the widget at your own deployment, add your site's origin to
+its `LISTEN_ALLOWED_ORIGINS`. Requests from anywhere else are refused. There is
+more on that under [Running your own](#running-your-own).
 
-`LISTEN_TTS_CONCURRENCY` (4) is how many pieces one article speaks at once.
+## Build your own player
 
-`LISTEN_MAX_LIVE_SESSIONS` (16) is how many Live sessions may be open across
-**all** readers. It has to live in Redis: a workflow step is an independent
-invocation with no memory of the others, so a counter in a variable would start
-at zero every time and cap nothing. Slots are counted and released in one round
-trip, released even when a step throws, and carry a lease so a step killed
-mid-flight loses its slot for the length of the lease rather than for ever.
-Readers queue for a slot rather than being refused.
+The widget is a thin client over four endpoints. If you would rather build the
+button yourself, this is the whole contract.
 
-Verified against the live model: four readers wanting eight sessions against a
-cap of two never opened more than two sockets, and all eight pieces came back.
+Base URL: `https://listen.afrispeech.org`
 
-A piece that fails is retried up to `LISTEN_TTS_MAX_ATTEMPTS` (5) times with
-growing delays. From the second attempt it is spoken as two halves instead of
-being repeated, because a piece too long to finish fails identically every
-time. Verified: a 1,776 character piece recovered to 12 pieces and 107 seconds
-of audible audio.
+### 1. List the languages
 
-## The cache
+```http
+GET /languages
+```
 
-A recording is kept in Redis under a digest of the text after limiting, the
-language, and every setting that changes the samples. A repeat visit is served
-without recording again, and an article edited under a stable address is not
-served stale audio. A page address also maps to the text it produced, so a
-revisit skips the fetch as well.
+```json
+{ "languages": [ { "code": "swh", "name": "Swahili", "google": "sw", "countries": ["KE", "TZ"] } ] }
+```
 
-## Running it
+Free, and not behind the key, because a client needs it before it has anything
+else and because guessing is worse than it sounds: an unrecognised code is not
+refused, it falls back to English, so a reader who asked for one language is
+quietly given another. **Fetch this rather than hardcoding codes.**
 
-    cp .env.example .env      # fill in the keys below
-    npm install
-    npm test                  # 59 checks, no network and no model needed
-    npm run test:semaphore    # 6 checks, needs Redis
-    npm run test:e2e          # 13 checks, needs Gemini and Redis
+### 2. Ask for the audio
 
-`test:e2e` records a real article and measures it. It checks that the cap holds,
-that the text is truncated on a sentence boundary, that the MP3 decodes at
-16 kHz to audible signal rather than silence, that the length survives the
-encode, and that the audio round trips through Redis byte for byte.
+```http
+POST /speak
+x-listen-key: <your key>
+content-type: application/json
 
-### Keys needed
+{ "url": "https://example.com/article", "lang": "swh" }
+```
 
-| Key | Why |
+Either `url` or `text`. Also accepts `locale` to match the browser's region and
+`source` when you already know the input language.
+
+The work takes a minute or two, so this does not return audio. It returns a run
+to collect it from:
+
+```json
+{ "workflowRunId": "wfr_...", "finishCondition": "x-afrispeech-audio-ready" }
+```
+
+### 3. Poll for it
+
+```http
+GET /status?run=wfr_...
+x-listen-key: <your key>
+```
+
+```json
+{ "state": "done", "language": "Swahili", "languageCode": "swh", "chars": 998,
+  "totalChars": 96384, "truncated": true, "via": "cache", "seconds": 104.4,
+  "bytes": 313524, "runId": "wfr_..." }
+```
+
+`state` is `queued`, `running`, `done` or `error`. On failure:
+
+```json
+{ "state": "error", "error": "Sorry, this webpage is not supported." }
+```
+
+Poll every second or so. A long article takes a couple of minutes.
+
+### 4. Get the audio
+
+```http
+GET /audio?run=wfr_...
+x-listen-key: <your key>
+```
+
+`audio/mpeg`, 16 kHz mono. Fetch it with the header and make a blob URL:
+
+```js
+const res = await fetch(`${BASE}/audio?run=${runId}`, { headers: { 'x-listen-key': KEY } });
+const url = URL.createObjectURL(await res.blob());
+audio.src = url;   // do not point <audio> straight at the endpoint
+```
+
+Pointing an `<audio src>` at `/audio` directly does not work: a media element
+cannot send a custom header, and the request comes back 401.
+
+### A whole client, in twenty lines
+
+```js
+const BASE = 'https://listen.afrispeech.org';
+const KEY = 'your-key';
+const headers = { 'x-listen-key': KEY, 'content-type': 'application/json' };
+
+const { workflowRunId: run } = await fetch(`${BASE}/speak`, {
+  method: 'POST', headers,
+  body: JSON.stringify({ url: location.href, lang: 'swh' }),
+}).then((r) => r.json());
+
+const status = await (async () => {
+  for (;;) {
+    const s = await fetch(`${BASE}/status?run=${run}`, { headers }).then((r) => r.json());
+    if (s.state === 'done' || s.state === 'error') return s;
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+})();
+
+if (status.state === 'error') throw new Error(status.error);
+
+const res = await fetch(`${BASE}/audio?run=${run}`, { headers });
+audio.src = URL.createObjectURL(await res.blob());
+audio.play();
+```
+
+## The languages
+
+43, chosen because they are the ones with speakers, not the ones with the
+best models. All are translated through a Thai pivot, which is where the
+translation quality comes from.
+
+```js
+const { languages } = await fetch(`${BASE}/languages`).then((r) => r.json());
+```
+
+`code` is the AfriSpeech code you pass to `/speak`. `google` is the underlying
+Google Translate code, and is there so you can see what is underneath.
+
+One thing worth knowing: **the voice is English.** The text is translated into
+the target language, then spoken by an English voice reading it. It is clear and
+correct, and it is not a native speaker of that language. This is deliberate:
+native voices for 43 languages are not available in one service, and a
+mispronounced word is worse than a foreign accent.
+
+## Running your own
+
+The service is a Cloudflare Worker plus an Upstash Workflow. It needs a Gemini
+API key, an Upstash Redis, and a QStash token.
+
+```bash
+git clone https://github.com/walusungungulube-stack/afrispeech-web-tts
+cd afrispeech-web-tts
+cp .env.example .env    # then fill it in
+npm install
+npm test
+npm start               # wrangler dev
+```
+
+Set `LISTEN_ALLOWED_ORIGINS` to the origins allowed to call it, comma separated.
+**This is the only real access control.** A key handed to a browser is readable
+by anyone who views the source; it exists to tell your traffic apart from stray
+calls, not to keep anyone out. The origin allowlist is what does that.
+
+| Variable | What it is |
 | --- | --- |
-| `GEMINI_API_KEY` | the model |
-| `QSTASH_TOKEN` | the queue that carries the workflow |
-| `QSTASH_CURRENT_SIGNING_KEY` | verifies callbacks |
-| `QSTASH_NEXT_SIGNING_KEY` | the key after rotation |
-| `UPSTASH_REDIS_REST_URL` / `_TOKEN` | run state, audio, cache, slot counter |
-| `LISTEN_API_KEY` | the shared key callers present |
+| `GEMINI_API_KEY` | Gemini access, with the TTS models enabled. |
+| `UPSTASH_REDIS_REST_URL` / `_TOKEN` | Run state and the audio cache. |
+| `QSTASH_REGION`, `EU_CENTRAL_1_QSTASH_URL` / `_TOKEN` | Runs the workflow off a request. |
+| `UPSTASH_WORKFLOW_URL` | Where the workflow endpoint is, once deployed. |
+| `LISTEN_API_KEY` | The browser key, if you use one. |
+| `LISTEN_ALLOWED_ORIGINS` | Origins allowed to call this. |
+| `LISTEN_MAX_CHARS` | Ceiling on how much of a page is read. |
 
-`LISTEN_API_KEY` is a soft gate only: it is handed to the browser, so anyone can
-read it out of the page source. The origin allowlist and the session cap are
-what actually do the work.
+Full list with defaults in [`.env.example`](.env.example).
 
-## Layout
+## How it works
 
-    src/index.mjs        the three routes and the workflow steps
-    src/lib/pipeline.mjs read, limit, translate, record, store
-    src/lib/live-tts.mjs the Gemini Live session and its callbacks
-    src/lib/mp3.mjs      24 kbps MP3 at 16 kHz
-    src/lib/semaphore.mjs the global cap
-    src/lib/retry.mjs    retries, and the halving recovery
-    src/lib/chunk.mjs    sentence-aware splitting
-    src/lib/store.mjs    Redis: runs, audio, cache
-    test/                checks, run offline unless the name says otherwise
+Short version, because it mostly does not concern you unless you are debugging.
 
-## Not done
+A request does not wait for audio. `POST /speak` hands the job to an Upstash
+Workflow and immediately returns a run id, so nothing times out behind a long
+article. The client polls `/status` and collects the audio when it is ready.
 
-- The QStash transport has not been exercised end to end. The pipeline is
-  verified directly, but a real queued run has not been watched through.
-- The queued transport is now live and a run has been watched end to end.
-  Nothing outstanding there.
+Inside the run: the page is fetched and reduced to its article text, clipped to
+a length cap, translated through Thai, and spoken by Gemini Live in pieces that
+are joined into one MP3. Each piece is retried on failure and halved if it keeps
+failing, because a piece that is too long for the model to hold open is the
+common case rather than the exceptional one.
+
+Finished audio is cached in Redis for 14 days, keyed by the text, the language,
+the voice and the model, so the same article read twice is paid for once. An
+entry that is not valid audio is discarded rather than served.
+
+Two details that matter if you are reading a log. A run that fails records the
+reason in Redis and answers `state: "error"` with something a reader can act on,
+because the SDK does not deliver a failure callback for a first invocation. And
+a translation still in Thai is asked for again rather than recorded, since Google
+reports a language it will not produce by handing back the Thai it was given,
+with nothing in the response to say so.
+
+## Development
+
+```bash
+npm test           # 85 checks, no network or keys needed
+npm run test:e2e   # real Gemini, real Redis, decodes the MP3 to check it is speech
+```
+
+| | |
+| --- | --- |
+| `src/index.mjs` | Routes, the workflow, error handling. |
+| `src/lib/translate.mjs` | Translation through the Thai pivot. |
+| `src/lib/pivot.mjs` | Checks the pivot out of Thai actually happened. |
+| `src/lib/live-tts.mjs` | Gemini Live session, PCM out. |
+| `src/lib/store.mjs` | Redis state, audio, and the caches. |
+| `test/` | One file per area, each runnable on its own. |
