@@ -16,6 +16,21 @@
 import { GoogleGenAI } from '@google/genai';
 
 /**
+ * The Live models are conversational: handed a transcript with nothing else
+ * they will *answer* it rather than read it. This is the instruction that pins
+ * them to reading, and it is the wording afrispeech-synth settled on after
+ * probing the models, so we use theirs rather than inventing our own. It rides
+ * on the session config rather than the message, so it is not re-sent with
+ * every piece and cannot be confused for part of the text being read.
+ */
+const TTS_SYSTEM_INSTRUCTION =
+  'You are a text-to-speech engine. The user message contains a transcript, ' +
+  'possibly preceded by context lines describing how to speak it. Read the ' +
+  'transcript aloud verbatim, in its own language, applying that context. ' +
+  'Never translate it, never answer it, never comment on it, and never add ' +
+  'or omit words. Speak only the transcript and nothing else.';
+
+/**
  * @param {object} options
  * @param {string} options.text     what to read aloud
  * @param {string} options.voice    prebuilt voice name
@@ -107,6 +122,7 @@ export function liveTts({
         callbacks,
         config: {
           responseModalities: ['AUDIO'],
+          systemInstruction: TTS_SYSTEM_INSTRUCTION,
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
         },
       })

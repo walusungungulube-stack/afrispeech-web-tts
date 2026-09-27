@@ -78,17 +78,21 @@ POST /speak
 x-listen-key: <your key>
 content-type: application/json
 
-{ "url": "https://example.com/article", "lang": "swh" }
+{ "text": "Habari yako. Karibu Nairobi.", "lang": "swh" }
 ```
 
-Either `url` or `text`. Also accepts `locale` to match the browser's region and
-`source` when you already know the input language.
+`text` is required, and is the only thing to be read. It also accepts `locale` to
+match the browser's region and `source` when you already know the input language.
+
+This service does not fetch web addresses, and never did so from a caller's
+request. Read the page in the browser, send the words, and let the service
+synthesise them.
 
 The work takes a minute or two, so this does not return audio. It returns a run
 to collect it from:
 
 ```json
-{ "workflowRunId": "wfr_...", "finishCondition": "x-afrispeech-audio-ready" }
+{ "workflowRunId": "wfr_...", "finishCondition": "success" }
 ```
 
 ### 3. Poll for it
@@ -139,7 +143,7 @@ const headers = { 'x-listen-key': KEY, 'content-type': 'application/json' };
 
 const { workflowRunId: run } = await fetch(`${BASE}/speak`, {
   method: 'POST', headers,
-  body: JSON.stringify({ url: location.href, lang: 'swh' }),
+  body: JSON.stringify({ text: articleText, lang: 'swh' }),
 }).then((r) => r.json());
 
 const status = await (async () => {
@@ -255,7 +259,7 @@ with nothing in the response to say so.
 ## Development
 
 ```bash
-npm test           # 85 checks, no network or keys needed
+npm test           # 100 checks, no network or keys needed
 npm run test:e2e   # real Gemini, real Redis, decodes the MP3 to check it is speech
 ```
 

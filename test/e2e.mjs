@@ -44,10 +44,10 @@ const t = (name, fn) => {
 
 console.log(`  model ${config.ttsModel}, ${config.mp3Kbps} kbps at ${config.mp3SampleRate} Hz\n`);
 const started = Date.now();
-const result = await synthesise({ text: ARTICLE, lang: 'en', locale: 'en-GB', title: 'Rates' });
+const result = await synthesise({ text: ARTICLE, lang: 'en', locale: 'en-GB' });
 const { meta, spoken, clipped } = result;
 
-console.log(`  read ${meta.via}, ${meta.chars}/${meta.totalChars} chars, truncated=${meta.truncated}`);
+console.log(`  ${meta.chars}/${meta.totalChars} chars, truncated=${meta.truncated}`);
 console.log(`  ${meta.language}: ${result.translated.text.slice(0, 90)}…`);
 console.log(`  ${meta.seconds}s audio, ${(meta.bytes / 1024).toFixed(0)} KB, first byte ${meta.firstByteMs}ms, synth ${(meta.synthMs / 1000).toFixed(1)}s`);
 console.log(`  wall ${((Date.now() - started) / 1000).toFixed(1)}s\n`);

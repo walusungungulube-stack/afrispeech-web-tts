@@ -7,7 +7,6 @@
  * one workflow step, and each is a plain function, so the whole chain can be run
  * and checked without a message queue in the way.
  */
-import { extractArticle, UnsupportedPageError } from './extract.mjs';
 import { truncateToLimit } from './truncate.mjs';
 import { translate } from './translate.mjs';
 import { stillInThai } from './pivot.mjs';
@@ -18,28 +17,16 @@ import { withRetry, bisect } from './retry.mjs';
 import { withSlot } from './semaphore.mjs';
 import { pcmToMp3, pcmSeconds } from './mp3.mjs';
 import { config } from './config.mjs';
-import { digestFor, getCached, putCached, digestUrl, getUrlText, putUrlText } from './store.mjs';
+import { digestFor, getCached, putCached } from './store.mjs';
 
 /** Step 1: the words. The widget sends text it read itself; a shared link sends a URL. */
-export async function readSource({ text, url, title } = {}) {
-  /* Any text at all is something to read out. A minimum length here used to mean
-     that a reader who typed a sentence was told the webpage was not supported,
-     which is a true statement about the wrong thing entirely. */
-  if (typeof text === 'string' && text.trim().length > 0) {
-    return { text, title: String(title || ''), via: 'client' };
-  }
-  if (typeof url === 'string' && url.trim()) {
-    const address = url.trim();
-    // A page we have already read does not need fetching again.
-    const seen = await getUrlText(digestUrl(address)).catch(() => null);
-    if (seen && seen.length >= 200) return { text: seen, title: '', via: 'cache' };
-    const article = await extractArticle(address);
-    await putUrlText(digestUrl(address), article.text).catch(() => {});
-    return { text: article.text, title: article.title, via: 'server' };
-  }
-  throw new UnsupportedPageError(
-    'Nothing to read: the request carried neither text nor an address.',
-  );
+export function readSource({ text } = {}) {
+  /* The reader sends the words to be read. It used to be able to send an
+     address instead, and the service fetched that address itself, which meant
+     anyone could aim a request at a host only this service could reach.
+     Nothing needed it once the button sat on the page being read. */
+  if (typeof text === 'string' && text.trim().length > 0) return { text };
+  throw new Error('Nothing to read: the request carried no text.');
 }
 
 /** Step 2: cap the length, preferring to finish on a full stop. */
@@ -113,7 +100,7 @@ export function resolveLanguage(requested, locale) {
  * 24 kHz signed 16-bit mono PCM, the same format for every piece, so joining is
  * a plain concatenation with no resampling and nothing to line up.
  */
-export async function speak(text) {
+export async function speak(text, language) {
   const pieces = splitForSynthesis(text, config.ttsChunkChars);
   const started = Date.now();
 
@@ -122,7 +109,7 @@ export async function speak(text) {
   // seconds each; in sequence that is two minutes of waiting, and running them
   // together brings it back to about the length of the longest piece. Order is
   // restored by index when the results are joined.
-  const spoken = await inParallel(pieces, config.ttsConcurrency, (piece) => speakPiece(piece, 0));
+  const spoken = await inParallel(pieces, config.ttsConcurrency, (piece) => speakPiece(piece, 0, language));
 
   const pcm = Buffer.concat(spoken.map((part) => part.pcm));
   const firstByteMs = Math.min(...spoken.map((part) => part.firstByteMs ?? Infinity));
@@ -150,11 +137,19 @@ export async function speak(text) {
  * If even that fails, the error is allowed out rather than quietly dropping the
  * words from the clip.
  */
-async function speakPiece(piece, depth) {
+async function speakPiece(piece, depth, language) {
+  // The system instruction tells the model to read whatever it is sent; this
+  // line is the per-utterance context it is told to apply, so the piece is
+  // read in the requested accent rather than the voice's own default one.
+  // It is prefixed to the transcript, which is the arrangement afrispeech-synth
+  // describes, so the model sees a context line then the words to read.
+  const instruction = language?.name ? `speak in ${language.name} accent` : '';
+
   // Each session is one of the globally available slots, so readers queue
   // behind each other rather than each opening up to ttsConcurrency sockets.
   const request = (text) => withSlot(() => liveTts({
     text,
+    instruction,
     voice: config.ttsVoice,
     model: config.ttsModel,
     timeoutMs: config.ttsTimeoutMs,
@@ -166,7 +161,7 @@ async function speakPiece(piece, depth) {
       if (attempt < 2 || depth >= config.ttsMaxBisect) return null;
       const halves = bisect(piece);
       if (!halves) return null;
-      const spoken = await Promise.all(halves.map((half) => speakPiece(half, depth + 1)));
+      const spoken = await Promise.all(halves.map((half) => speakPiece(half, depth + 1, language)));
       return {
         pcm: Buffer.concat(spoken.map((part) => part.pcm)),
         chunks: spoken.reduce((total, part) => total + (part.chunks || 0), 0),
@@ -217,8 +212,8 @@ export async function inParallel(items, limit, worker) {
  * audio will contain is folded into a digest first, so a hit means the stored
  * recording is exactly the one this request would have produced.
  */
-export async function synthesise({ text, url, title, lang, locale, source } = {}) {
-  const read = await readSource({ text, url, title });
+export async function synthesise({ text, lang, locale, source } = {}) {
+  const read = readSource({ text });
   const clipped = limitText(read.text);
   const language = resolveLanguage(lang, locale);
 
@@ -244,14 +239,13 @@ export async function synthesise({ text, url, title, lang, locale, source } = {}
   }
 
   const translated = await translateForSpeech(clipped.text, { lang, locale, source });
-  const spoken = await speak(translated.text);
+  const spoken = await speak(translated.text, translated);
   const meta = {
       language: translated.name,
       languageCode: translated.code,
       chars: clipped.text.length,
       totalChars: clipped.totalChars,
       truncated: clipped.truncated,
-    via: read.via,
     seconds: Number(spoken.seconds.toFixed(2)),
     bytes: spoken.mp3.length,
     pieces: spoken.pieces,

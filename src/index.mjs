@@ -17,8 +17,7 @@
  */
 import { serve, WorkflowNonRetryableError } from '@upstash/workflow';
 import { checkAuth, corsHeaders } from './lib/auth.mjs';
-import { checkStart } from './lib/ratelimit.mjs';
-import { UnsupportedPageError } from './lib/extract.mjs';
+import { checkFlood, claimBudget } from './lib/ratelimit.mjs';
 import { readSource, limitText, translateOutOfThai, speak, resolveLanguage } from './lib/pipeline.mjs';
 import { languageCatalogue } from './lib/languages.mjs';
 import { config } from './lib/config.mjs';
@@ -53,7 +52,6 @@ async function attempt(work) {
    be read is worth saying plainly, and a page that could not be fetched should
    not read as though the reader had asked for something impossible. */
 function describe(failure) {
-  if (failure.name === 'UnsupportedPageError') return UNSUPPORTED;
   if (/came back in Thai/.test(failure.message)) {
     return 'This article could not be translated into the language you chose. Please try again.';
   }
@@ -146,7 +144,7 @@ const workflow = serve(
     }
 
     const spoken = await context.run('record', () =>
-      attempt(async () => audioOut(await speak(translated.value.text))));
+      attempt(async () => audioOut(await speak(translated.value.text, translated.value))));
 
     if (!spoken.ok) {
       const message = describe(spoken);
@@ -191,6 +189,21 @@ const workflow = serve(
 const { handler: workflowHandler } = workflow;
 
 /** Wrap the workflow so the plain routes never start a run. */
+/** Render a refusal from either limit, the same way for both. */
+function limitResponse(limit, cors) {
+  return Response.json(
+    { error: limit.error },
+    {
+      status: limit.status,
+      headers: {
+        ...cors,
+        'retry-after': String(limit.retryAfter ?? 60),
+        'x-listen-limit': limit.scope ?? '',
+      },
+    },
+  );
+}
+
 export default {
   async fetch(request) {
     const url = new URL(request.url);
@@ -261,20 +274,8 @@ export default {
            moment a run starts, so this is the only route that is limited.
            Polling and collecting cost nothing and must not be, or waiting for
            an article would count against the reader. */
-        const limit = await checkStart(request);
-        if (!limit.ok) {
-          return Response.json(
-            { error: limit.error },
-            {
-              status: limit.status,
-              headers: {
-                ...cors,
-                'retry-after': String(limit.retryAfter ?? 60),
-                'x-listen-limit': limit.scope ?? '',
-              },
-            },
-          );
-        }
+        const flood = await checkFlood(request);
+        if (!flood.ok) return limitResponse(flood, cors);
       }
 
       // A body that is not an object would be parsed as a bare string and
@@ -283,7 +284,7 @@ export default {
         const contentType = request.headers.get('content-type') || '';
         if (!contentType.includes('application/json')) {
           return Response.json(
-            { error: 'send JSON with `text` or `url`' },
+            { error: 'send JSON with `text`' },
             { status: 415, headers: cors },
           );
         }
@@ -302,7 +303,7 @@ export default {
 
         if (!body || typeof body !== 'object' || Array.isArray(body)) {
           return Response.json(
-            { error: 'send a JSON object with `text` or `url`' },
+            { error: 'send a JSON object with `text`' },
             { status: 400, headers: cors },
           );
         }
@@ -311,13 +312,19 @@ export default {
         // run, so the reader is told straight away instead of watching a run
         // that was always going to fail.
         const hasText = typeof body.text === 'string' && body.text.trim().length > 0;
-        const hasUrl = typeof body.url === 'string' && body.url.trim().length > 0;
-        if (!hasText && !hasUrl) {
+        if (!hasText) {
           return Response.json(
-            { error: 'give me something to read: `text` or `url`' },
+            { error: 'give me something to read: `text`' },
             { status: 400, headers: cors },
           );
         }
+
+        /* Only now is it certain a run is about to start and the Gemini quota
+           is about to be spent, so only now are the daily allowance and the
+           service budget charged. A caller that floods us with empty bodies
+           still spends the flood guard, but cannot spend the day's money. */
+        const budget = await claimBudget(request);
+        if (!budget.ok) return limitResponse(budget, cors);
       }
 
       const response = await workflowHandler(request);

@@ -108,7 +108,7 @@ await check('a body that is not an object is refused plainly', async () => {
   });
   assert.equal(response.status, 400);
   const body = await response.json();
-  assert.match(body.error, /text.*url|url.*text/i);
+  assert.match(body.error, /text/);
 });
 
 await check('a non-JSON body is refused', async () => {
@@ -129,6 +129,19 @@ await check('a request with nothing to read is refused before a run starts', asy
     });
     assert.equal(response.status, 400, `${body} should be refused, got ${response.status}`);
   }
+});
+
+/* The service used to fetch any address it was handed, which let a caller aim a
+   request at a host only this service could reach. It reads words now. */
+await check('an address on its own is refused, not fetched', async () => {
+  const response = await call('/speak', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ url: 'https://example.com/', lang: 'swh' }),
+  });
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.match(body.error, /give me something to read/);
 });
 
 await check('malformed JSON is refused', async () => {
