@@ -241,6 +241,16 @@ above what you believe it can take and watch for `BUSY` or upstream errors. That
 is the honest way to measure it; the number above is a starting point, not a
 figure anyone has verified.
 
+**What has and has not been measured.** `npm run test:semaphore:scale` fires 300
+readers at the real Redis counter and checks the admission control around it: at
+a cap of 300 all 300 are admitted and every slot is returned, and at a cap of 50
+the peak is exactly 50 while all 300 go on to finish, so the queue drains and
+leaks nothing. What that does not measure is how many concurrent Live sessions
+one key sustains, because the work each slot does there is a short sleep rather
+than a turn. Answering that costs one Gemini turn per reader, so it is a
+deliberate measurement against a real key, not something a test suite should do
+on every run.
+
 Two other things are true of it and are easy to miss:
 
 - **The counter is in Redis, not in memory.** `listen:sem:live` is a Lua
@@ -478,8 +488,10 @@ page, which is what a reader would then go and check.
 ## Development
 
 ```bash
-npm test           # the unit suite, no network or keys needed
-npm run test:e2e   # real Gemini, real Redis, decodes the MP3 to check it is speech
+npm test                  # the unit suite, no network or keys needed
+npm run test:semaphore    # the slot counter and the queue, against real Redis
+npm run test:semaphore:scale   # the same, with 300 readers arriving together
+npm run test:e2e          # real Gemini, real Redis, decodes the MP3 to check it is speech
 ```
 
 | | |
