@@ -151,6 +151,30 @@ deploy here too, in a place where it looked like an origin problem.
 deployment, and the values a given deployment uses are internal hostnames that
 have no business in a public repository.
 
+**The public deployment sets it to `*`.** That is a deliberate choice, and the
+reasoning is worth keeping, because the allowlist looks like the thing
+protecting the quota and it is not.
+
+The allowlist is a browser check, and it only binds browsers. A request with no
+`Origin` header is not a browser request and skips it entirely, which is why
+this is the wrong thing to point a security argument at. What actually bounds
+spend is in `ratelimit.mjs`:
+
+| Limit | Default | Scope |
+| --- | --- | --- |
+| `LISTEN_RATE_PER_MINUTE` | 5 | per client IP |
+| `LISTEN_RATE_PER_DAY` | 100 | per client IP |
+| `LISTEN_BUDGET_PER_DAY` | 5000 | everyone, together |
+
+The per-client IP comes from `cf-connecting-ip`, which on Workers is set by
+Cloudflare and cannot be forged by the caller. So opening the allowlist bounds
+the damage rather than removing the bound: one visitor can spend at most 100
+runs a day, and everything together at most 5000.
+
+A deployment that is not public should still narrow it, and the honest reason is
+not cost. It is that an allowlist you control is how you find out who your
+service is being used from.
+
 ### The encoder, and why there is a staging script
 
 workerd will not compile a WebAssembly binary at runtime. It refuses

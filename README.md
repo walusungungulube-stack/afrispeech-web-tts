@@ -53,25 +53,23 @@ All optional, set on the script tag:
 
 ### Before you go live
 
-**A service answers only the origins on its allowlist.** `LISTEN_ALLOWED_ORIGINS`
-is enforced as a CORS check, so a page on an origin that is not on it does not
-get an error you can read. The page loads, the button appears, and pressing it
-does nothing. This is the one thing that will stop the integration working, and
-it fails quietly, so it is worth checking before you assume the rest works.
+**Which sites may use a service is that service's decision, not yours.**
+`LISTEN_ALLOWED_ORIGINS` is enforced as a CORS check, and a page on an origin
+that is not allowed gets no error you can read: the page loads, the button
+appears, and pressing it does nothing. Worth knowing about, because it is the
+one thing that can stop an integration working and it fails quietly.
 
-Which of these you are in decides what you do about it:
+Ours accepts any origin, so pointing the widget at it is the script tag above
+and nothing else. Use it from your site, a colleague's, or your own notes.
 
-- **You run your own service.** Add your site's origin to its
-  `LISTEN_ALLOWED_ORIGINS`. Nothing else to do.
-- **You point the widget at somebody else's service, ours included.** You cannot
-  add to their allowlist, so you have to ask. Either they add your origin, or
-  they set theirs to `*` to accept any site. A public deployment generally sets
-  `*`, because an allowlist of every site that ever embeds it is not a thing
-  anyone maintains.
+If you run your own service, narrow it to the origins you expect:
 
-Check which you are facing by loading your page and watching the network tab
-for the `/languages` request the widget makes on load. A `200` means you are on
-the allowlist. A CORS error, or no request at all, means you are not.
+    wrangler secret put LISTEN_ALLOWED_ORIGINS
+    # comma-separated origins, or * for any
+
+Check which situation you are in by loading your page and watching the network
+tab for the `/languages` request the widget makes on load. A `200` means you are
+allowed. A CORS error, or no request at all, means you are not.
 
 ## Build your own player
 
