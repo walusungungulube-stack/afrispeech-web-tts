@@ -4,6 +4,33 @@ How to run the synthesis service, what it needs in its environment, and how to
 point the website widget at it. The service itself is described in
 [README.md](README.md); this file is only about getting it running somewhere.
 
+## Whose Gemini key is it
+
+**This is a `LISTEN_API_KEY` you supply, on your own billing.** The key is the
+only real cost in this service, and it is the one thing you cannot share.
+
+The shared deployment at `afrispeech-listen.walusungungulube.workers.dev` uses
+this project's key and returns a `notice` on `GET /languages` saying so. It is
+there for integrating and demonstrating the widget. It is a public HTTP
+endpoint in front of a metered API, and there is no way to bill the person
+pressing the button, so it is not a production dependency for anyone.
+
+If you are deploying for real, the difference is entirely in these:
+
+- `LISTEN_API_KEY` is a key you created, with billing enabled, and you accept
+  the cost per turn.
+- It is a Worker secret, never a variable in `wrangler.jsonc` and never anything
+  in browser code. Anything shipped to the browser is readable by every visitor.
+- `LISTEN_RATE_*` and `LISTEN_BUDGET_PER_DAY` are set to limits you chose. The
+  defaults protect someone else's key; yours needs its own.
+- Turn on a budget alert in AI Studio. This service is reachable by the public
+  and you are billed by output audio, so the alert is how you find out before
+  the invoice does.
+
+Set `LISTEN_MAX_LIVE_SESSIONS` with the same thought. The default of 300 is a
+queue length, not a figure anyone has measured: what your key sustains is a
+property of the key. See "What `LISTEN_MAX_LIVE_SESSIONS` counts" below.
+
 ## What gets deployed
 
 One Cloudflare Worker, published to a `workers.dev` address. `src/worker.mjs` is
@@ -73,19 +100,16 @@ than rejected, so a typo quietly becomes the default.
 
 | Variable | Default | Range | What it does |
 | --- | --- | --- | --- |
-| `LISTEN_MAX_CHARS` | `1000` | 200 to 1000 | Ceiling on how much of a page is read. The cap cannot be raised above 1000. |
+| `LISTEN_MAX_CHARS` | `3000` | 200 to 3000 | Ceiling on how much of a page is sent to the model. The cap cannot be raised above 3000. |
+| `LISTEN_SUMMARY_MAX_CHARS` | `500` | 100 to 500 | Ceiling on how much is spoken, counted in characters of the reader's language. The model is told this number and asked to fit the summary inside it; it is not trimmed afterwards, because only audio comes back. Cannot be raised above 500. |
 | `LISTEN_MP3_KBPS` | `24` | 8 to 128 | Bitrate of the joined audio. |
 | `LISTEN_MP3_SAMPLE_RATE` | `16000` | 8000 to 24000 | Sample rate of the joined audio. |
 | `LISTEN_CACHE_TTL_SECONDS` | `1209600` | | How long a finished recording is kept for reuse. 14 days. |
 | `LISTEN_TTS_MODEL` | `gemini-3.1-flash-live-preview` | | The Live model that speaks. |
 | `LISTEN_TTS_VOICE` | `Zephyr` | | The voice. |
-| `LISTEN_TTS_TIMEOUT_MS` | `120000` | 10000 to 300000 | How long one piece may take. |
-| `LISTEN_TTS_CHUNK_CHARS` | `200` | 80 to 400 | Characters per spoken piece. |
-| `LISTEN_TTS_CONCURRENCY` | `4` | 1 to 8 | Pieces spoken at once. |
-| `LISTEN_TTS_MAX_ATTEMPTS` | `5` | 1 to 10 | Retries for a failing piece. |
-| `LISTEN_TTS_MAX_BISECT` | `2` | 0 to 4 | How many times a piece may be halved to recover it. |
-| `LISTEN_TRANSLATE_ATTEMPTS` | `3` | 1 to 6 | Retries when the pivot out of Thai did not take. |
-| `LISTEN_MAX_LIVE_SESSIONS` | `16` | 1 to 64 | Live sessions open across all readers. This is the real ceiling on how many readers can be served at once. |
+| `LISTEN_TTS_TIMEOUT_MS` | `120000` | 10000 to 300000 | How long one turn may take. |
+| `LISTEN_TTS_MAX_ATTEMPTS` | `5` | 1 to 10 | Retries for a failing turn. |
+| `LISTEN_MAX_LIVE_SESSIONS` | `300` | 1 to 512 | Live sessions open across all readers. This is the real ceiling on how many readers can be served at the same instant; readers past it wait in a queue rather than being refused. |
 | `LISTEN_MAX_SLOT_WAIT_MS` | `60000` | 1000 to 300000 | How long a reader waits for a session before being told the service is busy. |
 | `LISTEN_RATE_ENABLED` | on | set `0` to switch off | Turns the per-address limits off. |
 | `LISTEN_RATE_PER_MINUTE` | `5` | 0 to 600 | Per address, per minute. 0 switches that limit off. |
@@ -164,7 +188,7 @@ spend is in `ratelimit.mjs`:
 | --- | --- | --- |
 | `LISTEN_RATE_PER_MINUTE` | 5 | per client IP |
 | `LISTEN_RATE_PER_DAY` | 100 | per client IP |
-| `LISTEN_MAX_LIVE_SESSIONS` | 16 | everyone, concurrently |
+| `LISTEN_MAX_LIVE_SESSIONS` | 300 | everyone, concurrently, then a queue |
 
 The per-client IP comes from `cf-connecting-ip`, which on Workers is set by
 Cloudflare and cannot be forged by the caller.
@@ -188,18 +212,34 @@ The code is unchanged and the switch is still there; only the value is 0.
 
 ### What `LISTEN_MAX_LIVE_SESSIONS` counts
 
-A slot is **one utterance being spoken**, not one reader. `withSlot` wraps a
-single `liveTts()` call, and an article arrives split into pieces of about
-`LISTEN_MAX_CHARS` characters, so one reader can be holding several slots at
-once, up to `LISTEN_TTS_CONCURRENCY` of them.
+A slot is **one turn being spoken**, and one turn is one reader. The model is
+given the whole page at once and reduces it before speaking, so a reader holds
+exactly one slot for the length of a single turn however long the page was. The
+number of readers served at the same instant is therefore the slot count, which
+is set to 300.
 
-So the number of readers being served simultaneously is not a fixed number. It
-is between `maxLiveSessions / ttsConcurrency` and `maxLiveSessions`:
+That number is deliberately high, and it should be read as a **queue length,
+not a measurement**. The real ceiling is how many concurrent Live sessions the
+key behind `LISTEN_API_KEY` will hold, which is a property of the key rather
+than of this configuration. Setting a low cap would hide that ceiling until
+traffic arrived; setting a high one turns the ceiling into the error you get
+instead, which is the more useful failure:
 
-| Article | Pieces at once | Concurrent readers at 16 slots |
-| --- | --- | --- |
-| Short, under `LISTEN_MAX_CHARS` | 1 | 16 |
-| Long, split | 4 (`LISTEN_TTS_CONCURRENCY`) | 4 |
+| | |
+| --- | --- |
+| Readers arriving together, 300 or fewer | All served at once, one slot each |
+| More than 300 | The surplus waits, jittered, for up to `LISTEN_MAX_SLOT_WAIT_MS` |
+| Still waiting after that | 503, `BUSY`: "The service is busy. Please try again in a moment." |
+
+A turn runs about 25 to 35 seconds for a full page, so the 60-second default
+wait covers roughly two of them. Raise `LISTEN_MAX_SLOT_WAIT_MS` if you would
+rather a reader wait longer than be turned away, at the cost of them sitting on
+a connection while they wait.
+
+To find the real ceiling for your own key, raise `LISTEN_MAX_LIVE_SESSIONS`
+above what you believe it can take and watch for `BUSY` or upstream errors. That
+is the honest way to measure it; the number above is a starting point, not a
+figure anyone has verified.
 
 Two other things are true of it and are easy to miss:
 
@@ -394,7 +434,8 @@ of them make the endpoint private. Set any to 0 to switch it off.
 | `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY`, `QSTASH_NEXT_SIGNING_KEY` | Runs the workflow, and verifies the callback. |
 | `LISTEN_API_KEY` | The browser key, if you use one. |
 | `LISTEN_ALLOWED_ORIGINS` | Origins allowed to call this. |
-| `LISTEN_MAX_CHARS` | Ceiling on how much of a page is read. |
+| `LISTEN_MAX_CHARS` | Ceiling on how much of a page is sent to the model. |
+| `LISTEN_SUMMARY_MAX_CHARS` | Ceiling on how much is spoken. Part of the cache key. |
 
 Full list with defaults in [`.env.example`](.env.example).
 
@@ -406,35 +447,46 @@ A request does not wait for audio. `POST /speak` hands the job to an Upstash
 Workflow and immediately returns a run id, so nothing times out behind a long
 article. The client polls `/status` and collects the audio when it is ready.
 
-Inside the run: the text that was sent is clipped to a length cap, translated
-through Thai, and spoken by Gemini Live in pieces that are joined into one MP3. Each piece is retried on failure and halved if it keeps
-failing, because a piece that is too long for the model to hold open is the
-common case rather than the exceptional one.
+Inside the run: the text that was sent is clipped to `LISTEN_MAX_CHARS`, then
+handed to **one** Gemini Live turn, in the language it was already written in.
+The model is told the reader's target language and the `LISTEN_SUMMARY_MAX_CHARS`
+budget, and asked to reduce the page to a summary within that budget and speak
+only that. The result is one PCM stream, encoded to a single MP3. There is no
+translation service in the path and no second call to coordinate.
+
+A failing turn is retried up to `LISTEN_TTS_MAX_ATTEMPTS` times. It is not
+halved on failure: two halves would be two summaries and so twice the character
+budget, and the page no longer arrives as one piece of text to be summarised.
+
+The 500-character budget is an instruction to the model, not a trim afterwards.
+Only audio comes back, so there is nothing to measure the result against and
+nothing to cut. The page itself *is* capped, and that cap is enforced. If the
+budget has to be a guarantee rather than a request, that needs a transcript to
+check the length against, which is a different design.
 
 Finished audio is cached in Redis for 14 days, keyed by the text, the language,
-the voice and the model, so the same article read twice is paid for once. An
-entry that is not valid audio is discarded rather than served.
+the summary budget, the voice and the model, so the same article read twice is
+paid for once, and a changed budget is a different recording rather than a stale
+hit. An entry that is not valid audio is discarded rather than served.
 
-Two details that matter if you are reading a log. A run that fails records the
-reason in Redis and answers `state: "error"` with something a reader can act on,
-because the SDK does not deliver a failure callback for a first invocation. And
-a translation still in Thai is asked for again rather than recorded, since Google
-reports a language it will not produce by handing back the Thai it was given,
-with nothing in the response to say so.
+A run that fails records the reason in Redis and answers `state: "error"` with
+something a reader can act on, because the SDK does not deliver a failure
+callback for a first invocation. Upstream failures are reported as what they
+are: a busy Gemini or a dropped connection is not reported as an unreadable
+page, which is what a reader would then go and check.
 
 ## Development
 
 ```bash
-npm test           # 100 checks, no network or keys needed
+npm test           # the unit suite, no network or keys needed
 npm run test:e2e   # real Gemini, real Redis, decodes the MP3 to check it is speech
 ```
 
 | | |
 | --- | --- |
-| `src/index.mjs` | Routes, the workflow, error handling. |
-| `src/lib/translate.mjs` | Translation through the Thai pivot. |
-| `src/lib/pivot.mjs` | Checks the pivot out of Thai actually happened. |
-| `src/lib/live-tts.mjs` | Gemini Live session, PCM out. |
+| `src/index.mjs` | Routes, the workflow, the usage notice, error handling. |
+| `src/lib/live-tts.mjs` | The one Gemini Live turn: prompt, voice, PCM out. |
+| `src/lib/pipeline.mjs` | Read, cap, resolve language, speak, encode, cache. |
 | `src/lib/store.mjs` | Redis state, audio, and the caches. |
 | `test/` | One file per area, each runnable on its own. |
 

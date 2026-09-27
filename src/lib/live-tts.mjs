@@ -16,19 +16,26 @@
 import { GoogleGenAI } from '@google/genai';
 
 /**
- * The Live models are conversational: handed a transcript with nothing else
- * they will *answer* it rather than read it. This is the instruction that pins
- * them to reading, and it is the wording afrispeech-synth settled on after
- * probing the models, so we use theirs rather than inventing our own. It rides
- * on the session config rather than the message, so it is not re-sent with
- * every piece and cannot be confused for part of the text being read.
+ * The Live models are conversational: handed a page of text with nothing else
+ * they will discuss it rather than speak it. This pins them to the job, and it
+ * rides on the session config rather than the message, so it is not re-sent on
+ * every turn and cannot be read as part of the page.
+ *
+ * The model both reduces the page and speaks the result. That is deliberate: the
+ * summary is capped at a few hundred characters, so a reader gets a clip worth
+ * their time rather than a whole page read out at length, and the same turn
+ * both reduces and speaks, which costs one model call instead of two. The
+ * specific language and budget travel in the per-turn context line.
  */
 const TTS_SYSTEM_INSTRUCTION =
-  'You are a text-to-speech engine. The user message contains a transcript, ' +
-  'possibly preceded by context lines describing how to speak it. Read the ' +
-  'transcript aloud verbatim, in its own language, applying that context. ' +
-  'Never translate it, never answer it, never comment on it, and never add ' +
-  'or omit words. Speak only the transcript and nothing else.';
+  'You are a text-to-speech engine for people who cannot read the screen. The ' +
+  'user message names a target language and a character budget, and then gives ' +
+  'the text of a web page. Reduce that page to a summary that fits inside the ' +
+  'character budget and is written in the target language, then read only that ' +
+  'summary aloud, in that language. Never read the original text aloud. Keep ' +
+  'the summary faithful to the page: do not answer the page, do not comment ' +
+  'on it, do not add anything that is not in it, and do not invent facts. ' +
+  'Speak only the summary.';
 
 /**
  * @param {object} options

@@ -3,7 +3,7 @@
  * Run with: node test/retry.mjs
  */
 import assert from 'node:assert/strict';
-import { withRetry, backoff, bisect } from '../src/lib/retry.mjs';
+import { withRetry, backoff } from '../src/lib/retry.mjs';
 
 let passed = 0;
 const checks = [];
@@ -85,29 +85,16 @@ t('the original error surfaces when the alternative also fails', async () => {
   );
 });
 
-t('bisect splits on a word boundary and loses nothing', () => {
-  const text = 'The central bank raised rates this week to cool food inflation across the region.';
-  const halves = bisect(text);
-  assert.equal(halves.length, 2);
-  assert.ok(halves[0].length > 10 && halves[1].length > 10);
-  assert.ok(!/\s$/.test(halves[0]) && !/^\s/.test(halves[1]));
-  assert.equal(halves.join(' '), text);
-});
-
-t('bisect refuses text too short to divide', () => {
-  assert.equal(bisect('a'), null);
-  assert.equal(bisect('  '), null);
-  assert.equal(bisect('noseparatorhere'), null, 'a single word cannot be halved');
-});
-
-t('halving repeatedly always makes progress', () => {
-  let text = 'alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu';
-  for (let i = 0; i < 5; i += 1) {
-    const halves = bisect(text);
-    if (!halves) break;
-    text = halves[0];
-    assert.ok(text.length < 40, `still ${text.length} after ${i + 1} halvings`);
-  }
+t('a turn is retried whole, never split in half', async () => {
+  // Splitting would mean two summaries, so twice the character budget, from a
+  // fallback meant to be a recovery. This asserts the shape of the retry: the
+  // same work handed back each time.
+  let calls = 0;
+  await assert.rejects(
+    withRetry(() => { calls += 1; throw new Error('dropped'); }, { attempts: 3, sleep: async () => {} }),
+    /dropped/,
+  );
+  assert.equal(calls, 3);
 });
 
 await run();

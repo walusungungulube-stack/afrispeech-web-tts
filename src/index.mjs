@@ -18,13 +18,34 @@
 import { serve, WorkflowNonRetryableError } from '@upstash/workflow';
 import { checkAuth, corsHeaders } from './lib/auth.mjs';
 import { checkFlood, claimBudget } from './lib/ratelimit.mjs';
-import { readSource, limitText, translateOutOfThai, speak, resolveLanguage } from './lib/pipeline.mjs';
+import { readSource, limitText, speak, resolveLanguage } from './lib/pipeline.mjs';
 import { languageCatalogue } from './lib/languages.mjs';
 import { config } from './lib/config.mjs';
 import { digestFor, getCached, putCached } from './lib/store.mjs';
 import { markDone, markFailed, markRunning, putAudio, getMeta, getAudio, isValidRunId } from './lib/store.mjs';
 
 const UNSUPPORTED = 'Sorry, this webpage is not supported.';
+
+/* Shown to anyone integrating against this deployment.
+ *
+ * The synthesis is done by a Gemini Live session opened with a key this
+ * repository pays for, and that key has a budget. It is shared, so it can be
+ * exhausted by other callers, and there is no way to bill the person asking for
+ * the audio. That makes this a place to develop and demonstrate the widget, not
+ * something to put in front of readers who expect it to be there next minute.
+ * Saying so in the first response an integrator receives is cheaper than
+ * letting them find out in production. */
+const USAGE_NOTICE = {
+  status: 'testing-only',
+  message:
+    'This endpoint runs on a shared, limited Gemini Live budget owned by this project. '
+    + 'It is provided for integrating and testing the Listen widget, not for production traffic.',
+  production:
+    'For production, call the Gemini Live API from your own backend using your own paid API key, '
+    + 'and keep the paid key server-side. Never ship a Gemini API key in browser code: anyone who '
+    + 'loads the page can read it and spend your quota. This project can be pointed at that '
+    + 'endpoint instead, or you can run it yourself as documented in DEPLOY.md.',
+};
 
 /* A step that reports its own failure, rather than throwing it.
  *
@@ -48,18 +69,19 @@ async function attempt(work) {
   }
 }
 
-/* What the reader is told, which is not what the log says. A page that cannot
-   be read is worth saying plainly, and a page that could not be fetched should
-   not read as though the reader had asked for something impossible. */
+/* What the reader is told, which is not what the log says.
+ *
+ * Every failure now comes from the one model call, so the only thing worth
+ * softening is that call being busy or rate limited. An earlier version matched
+ * any "HTTP 4" and reported it as a page that could not be fetched, which was
+ * simply untrue: nothing here fetches a page, and a reader told to check the
+ * address had no address to check. */
 function describe(failure) {
-  if (/came back in Thai/.test(failure.message)) {
-    return 'This article could not be translated into the language you chose. Please try again.';
+  if (/quota|rate limit|RESOURCE_EXHAUSTED|\b429\b|\b503\b|UNAVAILABLE|overloaded|capacity/i.test(failure.message)) {
+    return 'The speech service is busy just now. Please try again in a moment.';
   }
-  if (/translate: HTTP 5|fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|getaddrinfo|timeout/i.test(failure.message)) {
-    return 'The translation service is not answering properly just now. Please try again.';
-  }
-  if (/HTTP 4|not found|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|getaddrinfo/i.test(failure.message)) {
-    return 'That page could not be fetched. Check the address and try again.';
+  if (/ETIMEDOUT|timeout|ECONNRESET|fetch failed|ENOTFOUND|ECONNREFUSED|socket|disconnect/i.test(failure.message)) {
+    return 'The connection to the speech service dropped. Please try again.';
   }
   return failure.message || 'Something went wrong.';
 }
@@ -119,6 +141,7 @@ const workflow = serve(
     const cached = await context.run('check-cache', () => attempt(() => getCached(digestFor({
       text: text.text,
       languageCode: language.code,
+      summaryChars: config.summaryMaxChars,
       voice: config.ttsVoice,
       model: config.ttsModel,
       kbps: config.mp3Kbps,
@@ -134,17 +157,8 @@ const workflow = serve(
       return { state: 'done', runId, cached: true };
     }
 
-    const translated = await context.run('translate', () =>
-      attempt(() => translateOutOfThai(text.text, body, config.translateAttempts)));
-
-    if (!translated.ok) {
-      const message = describe(translated);
-      await context.run('report', () => markFailed(runId, message));
-      throw new WorkflowNonRetryableError(message);
-    }
-
     const spoken = await context.run('record', () =>
-      attempt(async () => audioOut(await speak(translated.value.text, translated.value))));
+      attempt(async () => audioOut(await speak(text.text, language))));
 
     if (!spoken.ok) {
       const message = describe(spoken);
@@ -155,8 +169,8 @@ const workflow = serve(
     const mp3 = audioIn(spoken.value.mp3);
     const audio = { ...spoken.value, mp3 };
     const meta = {
-      language: translated.value.name,
-      languageCode: translated.value.code,
+      language: language.name,
+      languageCode: language.code,
       chars: text.text.length,
       totalChars: text.totalChars,
       truncated: text.truncated,
@@ -169,12 +183,13 @@ const workflow = serve(
 
     await context.run('save-cache', () => attempt(() => putCached(digestFor({
       text: text.text,
-      languageCode: translated.value.code,
+      languageCode: language.code,
+      summaryChars: config.summaryMaxChars,
       voice: config.ttsVoice,
       model: config.ttsModel,
       kbps: config.mp3Kbps,
       sampleRate: config.mp3SampleRate,
-    }), mp3, { ...meta, pieces: audio.pieces })));
+    }), mp3, meta)));
 
     await context.run('store', () => attempt(async () => {
       await putAudio(runId, mp3);
@@ -221,7 +236,7 @@ export default {
        The origin allowlist still applies. */
     if (url.pathname === '/languages' && request.method === 'GET') {
       return Response.json(
-        { languages: languageCatalogue() },
+        { notice: USAGE_NOTICE, languages: languageCatalogue() },
         { headers: { ...cors, 'cache-control': 'public, max-age=3600' } },
       );
     }

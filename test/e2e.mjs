@@ -34,6 +34,51 @@ Consumer groups argued that the pass-through into shop prices was faster than
 the official inflation figures suggested, and asked the statistics office to
 publish its underlying data more promptly. The central bank said it would review
 its position at the next scheduled meeting and that no decision had been taken.
+The central bank raised its benchmark rate this week, citing persistent food
+inflation across the region. Retailers in the capital reported higher shelf
+prices within days of the announcement, and several importers asked for a delay
+in payment terms so they could absorb the increase without passing all of it on.
+Economists at three commercial banks said they expect borrowing costs to remain
+elevated through the middle of the year, though they disagreed about how far,
+and one desk forecast a further increase before the rains. The finance ministry
+promised targeted support for small traders and said the details would be
+published next month, after a review of the hardship fund that was set up during
+the previous drought. Traders in the eastern districts said they had already
+raised prices twice this year and expected a third increase before the harvest.
+Consumer groups argued that the pass-through into shop prices was faster than
+the official inflation figures suggested, and asked the statistics office to
+publish its underlying data more promptly. The central bank said it would review
+its position at the next scheduled meeting and that no decision had been taken.
+The central bank raised its benchmark rate this week, citing persistent food
+inflation across the region. Retailers in the capital reported higher shelf
+prices within days of the announcement, and several importers asked for a delay
+in payment terms so they could absorb the increase without passing all of it on.
+Economists at three commercial banks said they expect borrowing costs to remain
+elevated through the middle of the year, though they disagreed about how far,
+and one desk forecast a further increase before the rains. The finance ministry
+promised targeted support for small traders and said the details would be
+published next month, after a review of the hardship fund that was set up during
+the previous drought. Traders in the eastern districts said they had already
+raised prices twice this year and expected a third increase before the harvest.
+Consumer groups argued that the pass-through into shop prices was faster than
+the official inflation figures suggested, and asked the statistics office to
+publish its underlying data more promptly. The central bank said it would review
+its position at the next scheduled meeting and that no decision had been taken.
+The central bank raised its benchmark rate this week, citing persistent food
+inflation across the region. Retailers in the capital reported higher shelf
+prices within days of the announcement, and several importers asked for a delay
+in payment terms so they could absorb the increase without passing all of it on.
+Economists at three commercial banks said they expect borrowing costs to remain
+elevated through the middle of the year, though they disagreed about how far,
+and one desk forecast a further increase before the rains. The finance ministry
+promised targeted support for small traders and said the details would be
+published next month, after a review of the hardship fund that was set up during
+the previous drought. Traders in the eastern districts said they had already
+raised prices twice this year and expected a third increase before the harvest.
+Consumer groups argued that the pass-through into shop prices was faster than
+the official inflation figures suggested, and asked the statistics office to
+publish its underlying data more promptly. The central bank said it would review
+its position at the next scheduled meeting and that no decision had been taken.
 `.trim();
 
 let passed = 0;
@@ -48,21 +93,18 @@ const result = await synthesise({ text: ARTICLE, lang: 'en', locale: 'en-GB' });
 const { meta, spoken, clipped } = result;
 
 console.log(`  ${meta.chars}/${meta.totalChars} chars, truncated=${meta.truncated}`);
-console.log(`  ${meta.language}: ${result.translated.text.slice(0, 90)}…`);
 console.log(`  ${meta.seconds}s audio, ${(meta.bytes / 1024).toFixed(0)} KB, first byte ${meta.firstByteMs}ms, synth ${(meta.synthMs / 1000).toFixed(1)}s`);
 console.log(`  wall ${((Date.now() - started) / 1000).toFixed(1)}s\n`);
 
-t('the text is capped at 1000 characters', () => {
-  assert.ok(clipped.text.length <= 1000, `got ${clipped.text.length}`);
+t('the page is capped before the model sees it', () => {
+  assert.ok(clipped.text.length <= config.maxChars, `got ${clipped.text.length}`);
 });
 t('it ends on a full stop', () => assert.ok(clipped.text.endsWith('.'), clipped.text.slice(-40)));
 t('the article was long enough to be trimmed', () => assert.equal(meta.truncated, true));
 t('speech keeps up with the clock', () => {
-  // Pieces are spoken in parallel, so this is expected to be faster than
   // realtime rather than matching it.
   const ratio = meta.seconds / (meta.synthMs / 1000);
   assert.ok(ratio > 0.5, `throughput only ${ratio.toFixed(2)}x realtime`);
-  console.log(`       throughput ${ratio.toFixed(2)}x realtime across ${meta.pieces} pieces`);
 });
 t('the bitrate holds regardless of clip length', () => {
   // The cost that matters is bytes per second of audio, not the file total: a
@@ -71,9 +113,14 @@ t('the bitrate holds regardless of clip length', () => {
   assert.ok(perSecond < 4 * 1024, `${(perSecond / 1024).toFixed(2)} KB per second of audio`);
   console.log(`       ${(perSecond / 1024).toFixed(2)} KB per second of audio`);
 });
-t('a full length article still fits the 1000 character cap', () => {
-  console.log(`       ${meta.chars} of ${meta.totalChars} characters, ${meta.seconds}s of audio, ${(meta.bytes / 1024).toFixed(0)} KB`);
-  assert.ok(meta.chars <= 1000);
+t('what is spoken is a summary, not the whole page', () => {
+  // Speaking 3000 characters aloud would run to several minutes. The budget is
+  // a few hundred, so a clip minutes long means the model read the page instead
+  // of reducing it, which is the failure this guards.
+  const spoken = meta.seconds * 14;
+  console.log(`       ${meta.chars} chars in, about ${spoken.toFixed(0)} spoken, ${meta.seconds}s of audio`);
+  assert.ok(spoken <= config.summaryMaxChars * 2,
+    `about ${spoken.toFixed(0)} characters were spoken, budget is ${config.summaryMaxChars}`);
 });
 
 const decoder = new MPEGDecoder();
@@ -126,6 +173,7 @@ t('the status payload carries what the widget reads', () => {
 const poisoned = await getCached(digestFor({
   text: 'This entry was written by a build that stored the wrong bytes.',
   languageCode: 'en',
+  summaryChars: config.summaryMaxChars,
   voice: config.ttsVoice,
   model: config.ttsModel,
   kbps: config.mp3Kbps,
@@ -134,6 +182,7 @@ const poisoned = await getCached(digestFor({
 await putCached(digestFor({
   text: 'This entry was written by a build that stored the wrong bytes.',
   languageCode: 'en',
+  summaryChars: config.summaryMaxChars,
   voice: config.ttsVoice,
   model: config.ttsModel,
   kbps: config.mp3Kbps,
@@ -143,16 +192,19 @@ await putCached(digestFor({
 const afterPoison = await getCached(digestFor({
   text: 'This entry was written by a build that stored the wrong bytes.',
   languageCode: 'en',
+  summaryChars: config.summaryMaxChars,
   voice: config.ttsVoice,
   model: config.ttsModel,
   kbps: config.mp3Kbps,
   sampleRate: config.mp3SampleRate,
 }));
-ok('a cache entry that is not audio is refused as a miss, not served', poisoned === null && afterPoison === null);
-ok('and the bad entry is gone rather than left to be found again',
-  await getCached(digestFor({
+t('a cache entry that is not audio is refused as a miss, not served',
+  () => poisoned === null && afterPoison === null);
+t('and the bad entry is gone rather than left to be found again',
+  async () => await getCached(digestFor({
     text: 'This entry was written by a build that stored the wrong bytes.',
     languageCode: 'en',
+    summaryChars: config.summaryMaxChars,
     voice: config.ttsVoice,
     model: config.ttsModel,
     kbps: config.mp3Kbps,
