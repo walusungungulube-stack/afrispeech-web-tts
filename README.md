@@ -53,10 +53,25 @@ All optional, set on the script tag:
 
 ### Before you go live
 
-If you are pointing the widget at your own deployment rather than ours, add your
-site's origin to its `LISTEN_ALLOWED_ORIGINS`. Requests from anywhere else are
-refused. That and the rest of running the service yourself is in
-[DEPLOY.md](DEPLOY.md).
+**A service answers only the origins on its allowlist.** `LISTEN_ALLOWED_ORIGINS`
+is enforced as a CORS check, so a page on an origin that is not on it does not
+get an error you can read. The page loads, the button appears, and pressing it
+does nothing. This is the one thing that will stop the integration working, and
+it fails quietly, so it is worth checking before you assume the rest works.
+
+Which of these you are in decides what you do about it:
+
+- **You run your own service.** Add your site's origin to its
+  `LISTEN_ALLOWED_ORIGINS`. Nothing else to do.
+- **You point the widget at somebody else's service, ours included.** You cannot
+  add to their allowlist, so you have to ask. Either they add your origin, or
+  they set theirs to `*` to accept any site. A public deployment generally sets
+  `*`, because an allowlist of every site that ever embeds it is not a thing
+  anyone maintains.
+
+Check which you are facing by loading your page and watching the network tab
+for the `/languages` request the widget makes on load. A `200` means you are on
+the allowlist. A CORS error, or no request at all, means you are not.
 
 ## Build your own player
 
