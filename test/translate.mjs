@@ -94,6 +94,7 @@ await t('a Cloud failure carries the status, not just a shrug', async () => {
 await t('only the free engine is allowed to hand back Thai', () => {
   assert.equal(pivotsThroughThai('unofficial'), true);
   assert.equal(pivotsThroughThai('cloud'), false);
+  assert.equal(pivotsThroughThai('gemini'), false, 'Gemini translates directly, no pivot');
 });
 
 await t('a recording is not shared between the two engines or the two services', () => {
@@ -108,7 +109,7 @@ await t('a recording is not shared between the two engines or the two services',
 });
 
 await t('the default pairing is the one that can be paid for', () => {
-  assert.equal(config.translateEngine, 'cloud');
+  assert.equal(config.translateEngine, 'gemini');
   assert.equal(config.speechEngine, 'gemini-tts');
 });
 

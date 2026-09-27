@@ -82,6 +82,50 @@ export async function geminiTts({
   };
 }
 
+/**
+ * Ask Gemini to translate. One request in, one text out — no chunking, and no
+ * pivot through anything.
+ *
+ * The other two engines translate in pieces because their endpoints cap the
+ * request and hop through Thai. This one is an ordinary model call: the whole
+ * clipped page goes in one request, and the answer is the translation. Which
+ * also means the request is bigger and the wait is longer than the endpoints',
+ * so the timeout is the model's, not the endpoint's.
+ *
+ * @param {object} options
+ * @param {string} options.text     the page text, already clipped to the cap
+ * @param {string} options.target   Google code for the output language
+ * @param {string} [options.source] known source code; omitted to let the model detect it
+ * @returns {Promise<{text: string, detected: string|null, pivoted: boolean}>}
+ */
+export async function geminiTranslate({
+  text,
+  target,
+  source,
+  model = process.env.GEMINI_TRANSLATE_MODEL || 'gemini-3.5-flash',
+  timeoutMs = 60_000,
+  client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }),
+} = {}) {
+  const asked = source && source !== 'auto'
+    ? `Translate the following text into ${target}. The source is ${source}. Reply with the translation only, no commentary, no quotes.`
+    : `Translate the following text into ${target}. Reply with the translation only, no commentary, no quotes.`;
+
+  const response = await withTimeout(client.models.generateContent({
+    model,
+    contents: [{ role: 'user', parts: [{ text: `${asked}\n\n${text}` }] }],
+  }), timeoutMs, 'gemini-translate: timed out');
+
+  const out = response?.candidates?.[0]?.content?.parts
+    ?.map((part) => part?.text ?? '')
+    .join('')
+    .replace(/^\s*["']+|["']+\s*$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!out) throw new Error('gemini-translate: the model returned nothing');
+  return { text: out, detected: null, pivoted: false };
+}
+
 /** A request that outlives its timeout is abandoned rather than left running. */
 function withTimeout(promise, ms, message) {
   let timer;

@@ -1,41 +1,17 @@
 /**
- * A cap on how many Gemini Live sessions may be open at once, across every
- * request being served.
+ * A cap on how many speech sessions may be open at once, across every request
+ * being served — in memory.
  *
- * The limit has to live outside the process. An article is synthesised by a
- * workflow, and a workflow step is an independent invocation with no memory of
- * the others, so a counter in a variable would start at zero every time and cap
- * nothing. Redis is the one place all of them can see.
- *
- * The count is a plain counter with a lease on it. If a step is killed midway,
- * the counter would keep a slot that nobody will ever return, so every acquire
- * also refreshes an expiry and an idle key resets itself. A slot is therefore
- * lost for at most the lease, not forever.
+ * The Redis version existed because a workflow step is an independent
+ * invocation with no memory of the others. In one process a plain counter is
+ * atomic by construction: JavaScript runs one thing at a time, so two callers
+ * cannot both read "one slot left" and both take it. No lease is needed either,
+ * because a crash loses everything anyway, including the counter.
  */
 
-/* Counted and released in one round trip, so two steps cannot both read "one
-   slot left" and both take it. */
-const ACQUIRE = `
-local current = tonumber(redis.call('GET', KEYS[1]) or '0')
-if current >= tonumber(ARGV[1]) then return -1 end
-redis.call('INCR', KEYS[1])
-redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
-return current + 1
-`;
-
-const RELEASE = `
-local current = tonumber(redis.call('GET', KEYS[1]) or '0')
-if current <= 1 then
-  redis.call('DEL', KEYS[1])
-  return 0
-end
-redis.call('DECR', KEYS[1])
-return current - 1
-`;
-
-const key = 'listen:sem:live';
-
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+let held = 0;
 
 /**
  * Hold a slot for the length of `work`.
@@ -47,23 +23,20 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function withSlot(work, {
   limit,
   maxWaitMs = 60_000,
-  leaseSeconds = 120,
-  redis,
   now = () => Date.now(),
   wait = sleep,
 } = {}) {
-  const client = redis || (await import('./store.mjs')).redis();
   const started = now();
 
   for (;;) {
-    const taken = await client.eval(ACQUIRE, [key], [limit, leaseSeconds]);
-    if (taken !== -1) {
+    if (held < limit) {
+      held += 1;
       try {
         return await work();
       } finally {
-        // Released whatever happened, including a thrown error or a step the
-        // platform cut short, so one bad request cannot shrink the service.
-        await client.eval(RELEASE, [key], []).catch(() => {});
+        // Released whatever happened, including a thrown error, so one bad
+        // request cannot shrink the service.
+        held = Math.max(0, held - 1);
       }
     }
 
@@ -73,13 +46,12 @@ export async function withSlot(work, {
         status: 503,
       });
     }
-    // Jitter, so slots freed by one step are not all taken by the waiters at once.
+    // Jitter, so slots freed by one request are not all taken by the waiters at once.
     await wait(200 + Math.floor(Math.random() * 400));
   }
 }
 
 /** How many slots are held right now. For tests and diagnostics. */
-export async function inUse(redis) {
-  const client = redis || (await import('./store.mjs')).redis();
-  return Number((await client.get(key)) || 0);
+export async function inUse() {
+  return held;
 }

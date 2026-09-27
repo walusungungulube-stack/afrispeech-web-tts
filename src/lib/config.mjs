@@ -29,13 +29,16 @@ export const config = {
    * someone's money, or a production service quietly leaning on an endpoint
    * anyone can change underneath it, are both worse than being explicit about
    * which one is running. */
-  translateEngine: process.env.LISTEN_TRANSLATE_ENGINE === 'unofficial' ? 'unofficial' : 'cloud',
+  translateEngine: ['unofficial', 'cloud'].includes(process.env.LISTEN_TRANSLATE_ENGINE)
+    ? process.env.LISTEN_TRANSLATE_ENGINE
+    : 'gemini',
   speechEngine: process.env.LISTEN_SPEECH_ENGINE === 'live' ? 'live' : 'gemini-tts',
   mp3Kbps: clampInt('LISTEN_MP3_KBPS', process.env.LISTEN_MP3_KBPS, 8, 128, 24),
   mp3SampleRate: clampInt('LISTEN_MP3_SAMPLE_RATE', process.env.LISTEN_MP3_SAMPLE_RATE, 8000, 24000, 16000),
   /* One model per speech engine, because they are different products with
    * different ids. LISTEN_SPEECH_ENGINE decides which of the two is read. */
   ttsModel: process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts',
+  translateModel: process.env.GEMINI_TRANSLATE_MODEL || 'gemini-3.5-flash',
   liveModel: process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live-preview',
   ttsVoice: process.env.GEMINI_TTS_VOICE || 'Zephyr',
   ttsTimeoutMs: clampInt('LISTEN_TTS_TIMEOUT_MS', process.env.LISTEN_TTS_TIMEOUT_MS, 10_000, 300_000, 120_000),

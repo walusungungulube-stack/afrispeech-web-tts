@@ -191,7 +191,7 @@ await markDone(runId, meta);
 const back = await getAudio(runId);
 const status = await getMeta(runId);
 
-t('the audio round trips through Redis byte for byte', () => {
+t('the audio round trips through the store byte for byte', () => {
   assert.ok(back, 'nothing came back');
   assert.equal(back.length, spoken.mp3.length);
   assert.ok(back.equals(spoken.mp3), 'the stored bytes differ');

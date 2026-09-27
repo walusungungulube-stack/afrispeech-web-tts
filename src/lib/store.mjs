@@ -42,12 +42,12 @@ export function isValidRunId(value) {
   return typeof value === 'string' && /^[wfr]_[A-Za-z0-9_-]{6,}$/.test(value);
 }
 
-export function markRunning(runId, meta = {}) { metaStore.set(runId, { state: 'running', ...meta, expires: Date.now() + META_TTL_MS }); }
-export function markDone(runId, meta = {}) { metaStore.set(runId, { state: 'done', ...meta, expires: Date.now() + META_TTL_MS }); }
-export function markFailed(runId, message) { metaStore.set(runId, { state: 'error', error: message, expires: Date.now() + META_TTL_MS }); }
-export function putAudio(runId, mp3) { audioStore.set(runId, { buffer: mp3, expires: Date.now() + AUDIO_TTL_MS }); }
-export function getMeta(runId) { const e = metaStore.get(runId); if (!e || Date.now() > e.expires) return null; return e; }
-export function getAudio(runId) { const e = audioStore.get(runId); if (!e || Date.now() > e.expires) return null; return e.buffer; }
-export function getCached(digest) { const e = cacheStore.get(digest); if (!e || Date.now() > e.expires) return null; const mp3 = typeof e.mp3 === 'string' ? Buffer.from(e.mp3, 'base64') : e.mp3; if (!isAudio(mp3)) { cacheStore.delete(digest); return null; } return { mp3, meta: e.meta }; }
-export function putCached(digest, mp3, meta) { cacheStore.set(digest, { mp3: Buffer.isBuffer(mp3) ? mp3.toString('base64') : mp3, meta, expires: Date.now() + CACHE_TTL_MS }); }
+export async function markRunning(runId, meta = {}) { metaStore.set(runId, { state: 'running', ...meta, expires: Date.now() + META_TTL_MS }); }
+export async function markDone(runId, meta = {}) { metaStore.set(runId, { state: 'done', ...meta, expires: Date.now() + META_TTL_MS }); }
+export async function markFailed(runId, message) { metaStore.set(runId, { state: 'error', error: message, expires: Date.now() + META_TTL_MS }); }
+export async function putAudio(runId, mp3) { audioStore.set(runId, { buffer: mp3, expires: Date.now() + AUDIO_TTL_MS }); }
+export async function getMeta(runId) { const e = metaStore.get(runId); if (!e || Date.now() > e.expires) return null; return e; }
+export async function getAudio(runId) { const e = audioStore.get(runId); if (!e || Date.now() > e.expires) return null; return e.buffer; }
+export async function getCached(digest) { const e = cacheStore.get(digest); if (!e || Date.now() > e.expires) return null; const mp3 = typeof e.mp3 === 'string' ? Buffer.from(e.mp3, 'base64') : e.mp3; if (!isAudio(mp3)) { cacheStore.delete(digest); return null; } return { mp3, meta: e.meta }; }
+export async function putCached(digest, mp3, meta) { cacheStore.set(digest, { mp3: Buffer.isBuffer(mp3) ? mp3.toString('base64') : mp3, meta, expires: Date.now() + CACHE_TTL_MS }); }
 export function pauseCleanup() { if (cleanupTimer) { clearInterval(cleanupTimer); cleanupTimer = null; } }

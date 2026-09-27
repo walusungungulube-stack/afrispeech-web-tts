@@ -22,6 +22,8 @@
  * billed and accountable, and only one of them is a decision you can defend.
  */
 
+import { geminiTranslate } from './gemini.mjs';
+
 const ENDPOINT = 'https://translate.googleapis.com/translate_a/single';
 const CLOUD_ENDPOINT = 'https://translation.googleapis.com/language/translate/v2';
 const PIVOT = 'th';
@@ -37,15 +39,18 @@ const TIMEOUT_MS = 8000;
  * @returns {Promise<{text: string, detected: string|null, pivoted: boolean}>}
  */
 export async function translate(text, target, source = 'auto', options = {}) {
-  const engine = options.engine || 'unofficial';
+  const engine = options.engine || 'gemini';
   return engine === 'cloud'
     ? cloudTranslate(text, target, source, options)
-    : unofficialTranslate(text, target, source, options);
+    : engine === 'gemini'
+      ? geminiTranslate({ text, target, source })
+      : unofficialTranslate(text, target, source, options);
 }
 
-/** Whether this engine routes through Thai, and so can hand back Thai untranslated. */
+/** Whether this engine routes through Thai, and so can hand back Thai untranslated.
+ *  Only the free endpoint does: Cloud and Gemini translate source to target directly. */
 export function pivotsThroughThai(engine) {
-  return engine !== 'cloud';
+  return engine === 'unofficial';
 }
 
 async function unofficialTranslate(text, target, source = 'auto', { fetchImpl = fetch } = {}) {

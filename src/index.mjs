@@ -21,7 +21,7 @@ async function runSynthesis(runId, body) {
   if (!made.ok) { markFailed(runId, describe(made)); return; }
   const mp3 = audioIn(made.value.spoken.mp3);
   const meta = { ...made.value.meta, via: source.via };
-  putAudio(runId, mp3); markDone(runId, meta);
+  await putAudio(runId, mp3); await markDone(runId, meta);
 }
 function limitResponse(limit, cors) { return Response.json({ error: limit.error }, { status: limit.status, headers: { ...cors, "retry-after": String(limit.retryAfter ?? 60), "x-listen-limit": limit.scope ?? "" } }); }
 const worker = { async fetch(request) {
@@ -30,8 +30,8 @@ const worker = { async fetch(request) {
   if (url.pathname === "/languages" && request.method === "GET") return Response.json({ notice: USAGE_NOTICE, languages: languageCatalogue() }, { headers: { ...cors, "cache-control": "public, max-age=3600" } });
   const auth = checkAuth(request); if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status, headers: cors });
   if (url.pathname === "/languages" && request.method === "GET") return Response.json({ notice: USAGE_NOTICE, languages: languageCatalogue() }, { headers: { ...cors, "cache-control": "public, max-age=3600" } });
-  if (url.pathname === "/status" && request.method === "GET") { const run = url.searchParams.get("run"); if (!isValidRunId(run)) return Response.json({ error: "bad run id" }, { status: 400, headers: cors }); const meta = getMeta(run); if (!meta) return Response.json({ state: "unknown" }, { headers: cors }); return Response.json(meta, { headers: cors }); }
-  if (url.pathname === "/audio" && request.method === "GET") { const run = url.searchParams.get("run"); if (!isValidRunId(run)) return Response.json({ error: "bad run id" }, { status: 400, headers: cors }); const mp3 = getAudio(run); if (!mp3) return Response.json({ error: "not ready" }, { status: 404, headers: cors }); return new Response(mp3, { headers: { ...cors, "content-type": "audio/mpeg", "content-length": String(mp3.length), "cache-control": "private, max-age=3600" } }); }
+  if (url.pathname === "/status" && request.method === "GET") { const run = url.searchParams.get("run"); if (!isValidRunId(run)) return Response.json({ error: "bad run id" }, { status: 400, headers: cors }); const meta = await getMeta(run); if (!meta) return Response.json({ state: "unknown" }, { headers: cors }); return Response.json(meta, { headers: cors }); }
+  if (url.pathname === "/audio" && request.method === "GET") { const run = url.searchParams.get("run"); if (!isValidRunId(run)) return Response.json({ error: "bad run id" }, { status: 400, headers: cors }); const mp3 = await getAudio(run); if (!mp3) return Response.json({ error: "not ready" }, { status: 404, headers: cors }); return new Response(mp3, { headers: { ...cors, "content-type": "audio/mpeg", "content-length": String(mp3.length), "cache-control": "private, max-age=3600" } }); }
   if (url.pathname === "/speak" && request.method === "POST") {
     // Flood guard runs BEFORE body validation: a malformed request still costs
     // a socket, so it counts against the per-minute limit.
@@ -42,7 +42,7 @@ const worker = { async fetch(request) {
     if (!body || typeof body !== "object" || Array.isArray(body)) return Response.json({ error: "send a JSON object with text" }, { status: 400, headers: cors });
     if (typeof body.text !== "string" || !body.text.trim().length) return Response.json({ error: "give me something to read: text" }, { status: 400, headers: cors });
     const budget = await claimBudget(request); if (!budget.ok) return limitResponse(budget, cors);
-    const runId = generateRunId(); markRunning(runId);
+    const runId = generateRunId(); await markRunning(runId);
     runSynthesis(runId, body).catch((err) => { console.error("synthesis failed:", err); markFailed(runId, err.message || "Unknown error"); });
     return Response.json({ workflowRunId: runId, finishCondition: "success" }, { headers: cors });
   }
