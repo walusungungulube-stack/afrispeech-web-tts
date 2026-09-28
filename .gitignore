@@ -15,3 +15,4 @@ node_modules/
 src/lib/mp3.wasm
 __pycache__/
 *.pyc
+.env.modal
